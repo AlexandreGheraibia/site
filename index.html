@@ -18,7 +18,7 @@
       --warn: #fbbf24;
     }
 
-    * {
+    *, *::before, *::after {
       box-sizing: border-box;
       margin: 0;
       padding: 0;
@@ -762,7 +762,7 @@
             <h3>CV Interactif 3D VRM &amp; Assistante IA</h3>
             <span class="item-date">2026</span>
           </div>
-          <p>Interface web construite avec Three.js et <code>@pixiv/three-vrm</code> (VRM1 Sample), animée selon le contexte conversationnel et connectée à Gemini via <code>gemini.php</code>.</p>
+          <p>Interface web construite avec Three.js et <code>@pixiv/three-vrm</code> (VRM1 Sample), animée selon le contexte conversationnel et connectée à Gemini via Cloudflare Worker.</p>
         </div>
       </section>
 
@@ -867,7 +867,7 @@
     import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
     import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
 
-    // Endpoint PHP local/serveur (sans redirection 302 ni login Google)
+    // URL de ton Cloudflare Worker (remplace <ton-sous-domaine> par ton sous-domaine workers.dev)
     const GEMINI_ENDPOINT = 'https://billowing-field-aa78.<ton-sous-domaine>.workers.dev';
 
     // URL officielle du modèle Pixiv VRM1 Sample
@@ -982,7 +982,7 @@
             resetCamera();
 
             statusDot.classList.remove('warn');
-            statusText.textContent = 'Assistante VRM1 Sample prête (./gemini.php + repli local)';
+            statusText.textContent = 'Assistante VRM1 Sample prête (Worker + repli local)';
             triggerGesture('wave', 'happy');
           } catch (err) {
             console.error('Erreur initialisation VRM :', err);
@@ -1262,7 +1262,7 @@
       };
     }
 
-    // Interrogation de ./gemini.php en POST JSON avec repli automatique sur localAssistantReply()
+    // Interrogation du Cloudflare Worker en POST JSON avec repli automatique sur localAssistantReply()
     async function askAssistant(question) {
       const cleanQ = question.trim();
       if (!cleanQ) return;
@@ -1289,7 +1289,7 @@
         clearTimeout(timer);
 
         const text = await res.text();
-        if (!text.trim().startsWith('<?php')) {
+        if (!text.trim().startsWith('<?php') && !text.trim().startsWith('<')) {
           const data = JSON.parse(text);
           if (data && typeof data.reply === 'string' && data.reply.trim()) {
             result = data;
@@ -1302,10 +1302,10 @@
       if (!result) {
         result = localAssistantReply(cleanQ);
         statusDot.classList.add('warn');
-        statusText.textContent = 'Repli IA locale (./gemini.php indisponible ou sans exécution PHP)';
+        statusText.textContent = 'Repli IA locale (Worker indisponible)';
       } else {
         statusDot.classList.remove('warn');
-        statusText.textContent = 'Connecté à Gemini via ./gemini.php';
+        statusText.textContent = 'Connecté à Gemini via Cloudflare Worker';
       }
 
       conversationHistory.push({ role: 'user', text: cleanQ });
