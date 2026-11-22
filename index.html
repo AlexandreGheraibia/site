@@ -606,4 +606,756 @@
       </div>
       <div class="social-row">
         <a class="icon-btn" href="https://www.linkedin.com" target="_blank" rel="noopener" title="LinkedIn" aria-label="LinkedIn">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M19 3a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14m-.5 15.5v-5.3a3.26 3.26 0 0 0-3.26-3.26c-.85
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M19 3a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14m-.5 15.5v-5.3a3.26 3.26 0 0 0-3.26-3.26c-.85 0-1.84.52-2.28 1.3v-1.11h-2.79v8.37h2.79v-4.93c0-.77.62-1.4 1.39-1.4a1.4 1.4 0 0 1 1.4 1.4v4.93h2.75M6.88 8.56a1.68 1.68 0 0 0 1.68-1.68c0-.93-.75-1.69-1.68-1.69a1.69 1.69 0 0 0-1.69 1.69c0 .93.76 1.68 1.69 1.68m1.39 9.94v-8.37H5.5v8.37h2.77z"/></svg>
+        </a>
+        <a class="icon-btn" href="https://github.com/AlexandreGheraibia" target="_blank" rel="noopener" title="GitHub" aria-label="GitHub">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2A10 10 0 0 0 2 12c0 4.42 2.87 8.17 6.84 9.5.5.08.66-.23.66-.5v-1.69c-2.77.6-3.36-1.34-3.36-1.34-.46-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.6.07-.6 1 .07 1.53 1.03 1.53 1.03.87 1.52 2.34 1.07 2.91.83.09-.65.35-1.09.63-1.34-2.22-.25-4.55-1.11-4.55-4.92 0-1.11.38-2 1.03-2.71-.1-.25-.45-1.29.1-2.64 0 0 .84-.27 2.75 1.02.79-.22 1.65-.33 2.5-.33.85 0 1.71.11 2.5.33 1.91-1.29 2.75-1.02 2.75-1.02.55 1.35.2 2.39.1 2.64.65.71 1.03 1.6 1.03 2.71 0 3.82-2.34 4.66-4.57 4.91.36.31.69.92.69 1.85V21c0 .27.16.59.67.5C19.14 20.16 22 16.42 22 12A10 10 0 0 0 12 2z"/></svg>
+        </a>
+        <button type="button" class="icon-btn" id="btn-mail-shortcut" title="Contacter Alexandre" aria-label="Email">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
+        </button>
+      </div>
+    </aside>
+
+    <!-- Colonne Centrale : Assistante 3D VRM1 Sample + Dialogue -->
+    <section class="card stage-card">
+      <div class="canvas-wrap" id="drop-zone">
+        <canvas id="vrm-canvas"></canvas>
+        <div class="stage-overlay-top">
+          <button type="button" class="badge-chip" id="btn-reset-cam" title="Recentrer la caméra">↻ Caméra</button>
+          <span class="badge-chip">VRM1 Sample (Pixiv)</span>
+        </div>
+        <div class="holo-box" id="holo-box">
+          <div class="holo-box-title" id="holo-title">PARCOURS</div>
+          <div class="holo-box-sub" id="holo-sub">Licence MIA • Master 1 • M2i</div>
+        </div>
+      </div>
+
+      <div class="controls-bar">
+        <label class="ctrl-btn" for="vrm-file-input">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+          Charger un .VRM
+        </label>
+        <input type="file" id="vrm-file-input" accept=".vrm,.glb" hidden />
+
+        <button type="button" class="ctrl-btn active-ok" id="btn-voice-toggle">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>
+          Voix Assistante (FR)
+        </button>
+
+        <button type="button" class="ctrl-btn" id="btn-pitch">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          Présentation
+        </button>
+      </div>
+
+      <div class="status-line">
+        <span class="dot" id="status-dot"></span>
+        <span id="status-text">Chargement du modèle VRM1 Sample...</span>
+      </div>
+
+      <div class="assistant-bubble" id="assistant-bubble">
+        Bonjour ! Je suis l'assistante virtuelle d'Alexandre Gheraibia. Sur quoi souhaitez-vous échanger : ses projets IA et OCR hors ligne, ses expériences techniques, ses compétences ou sa formation ?
+      </div>
+
+      <div class="quick-prompts">
+        <button type="button" data-q="Présente le parcours d'Alexandre">Parcours</button>
+        <button type="button" data-q="Quelles sont ses compétences techniques ?">Compétences</button>
+        <button type="button" data-q="Parle-moi de ses projets IA et OCR hors ligne">Projets IA &amp; OCR</button>
+        <button type="button" data-q="Quelles sont ses expériences professionnelles ?">Expériences</button>
+        <button type="button" data-q="Comment contacter Alexandre ?">Contact</button>
+      </div>
+
+      <form class="chat-form" id="chat-form">
+        <input type="text" id="chat-input" placeholder="Poser une question à l'assistante..." autocomplete="off" />
+        <button type="submit" aria-label="Envoyer">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+        </button>
+      </form>
+    </section>
+
+    <!-- Colonne Droite : Réponse IA sur le CV + Rubrique active -->
+    <article class="card cv-viewer">
+      <div class="ai-cv-card hidden" id="ai-cv-card">
+        <div class="ai-cv-header">
+          <span>✦ ASSISTANT CV • RÉPONSE INSTANTANÉE</span>
+          <button type="button" class="ai-cv-close" id="ai-cv-close" title="Fermer">×</button>
+        </div>
+        <div class="ai-cv-question" id="ai-cv-question"></div>
+        <div class="ai-cv-answer" id="ai-cv-answer"></div>
+      </div>
+
+      <!-- Section Parcours -->
+      <section class="cv-section active" id="sec-parcours">
+        <h2 class="sec-title">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          Parcours
+        </h2>
+        <p>Bonjour,</p>
+        <p>Diplômé d'une <strong>Licence de Mathématiques et Informatique Appliquées</strong> (niveau <strong>Master 1</strong>) à l'Université Joseph Fourier (Grenoble I), j'ai complété mon parcours par un cursus développeur Java Fullstack (POEI M2i).</p>
+        <p>Mon profil associe le <strong>développement logiciel</strong> (Java, C/C++, Python, Angular, Web), l'administration <strong>systèmes et réseaux</strong> (Linux, serveurs PXE, virtualisation VMware) et l'<strong>intelligence artificielle embarquée</strong> (pipelines OCR/VLM hors ligne sur terminaux mobiles et terminaux d'encaissement).</p>
+        <p>Basé à <strong>Grenoble</strong>, j'aime concevoir des outils pragmatiques, fiables et utiles sur le terrain, que ce soit pour la traçabilité industrielle, la lutte contre le gaspillage alimentaire ou les interfaces web 3D interactives.</p>
+      </section>
+
+      <!-- Section Compétences -->
+      <section class="cv-section" id="sec-competences">
+        <h2 class="sec-title">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+          Compétences
+        </h2>
+        <div class="item-block">
+          <div class="item-head"><h3>Développement Logiciel &amp; Web</h3></div>
+          <div class="tags">
+            <span class="tag">Java / Spring</span>
+            <span class="tag">C / C++</span>
+            <span class="tag">Python</span>
+            <span class="tag">JavaScript / TypeScript</span>
+            <span class="tag">Angular</span>
+            <span class="tag">HTML5 / CSS3 / PHP</span>
+            <span class="tag">SQL</span>
+          </div>
+        </div>
+        <div class="item-block">
+          <div class="item-head"><h3>IA Embarquée &amp; Vision par Ordinateur</h3></div>
+          <div class="tags">
+            <span class="tag">Android Studio / Kotlin</span>
+            <span class="tag">PaddleOCR / parseq_tiny</span>
+            <span class="tag">SmolVLM2-256M</span>
+            <span class="tag">Inférence CPU hors ligne</span>
+            <span class="tag">Ingenico DX8000</span>
+          </div>
+        </div>
+        <div class="item-block">
+          <div class="item-head"><h3>Systèmes, Réseaux &amp; Outils</h3></div>
+          <div class="tags">
+            <span class="tag">Linux</span>
+            <span class="tag">Windows Server / PowerShell</span>
+            <span class="tag">Déploiement PXE</span>
+            <span class="tag">VMware</span>
+            <span class="tag">Git / GitHub</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Section Portfolio -->
+      <section class="cv-section" id="sec-portfolio">
+        <h2 class="sec-title">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+          Portfolio &amp; Projets
+        </h2>
+        <div class="item-block">
+          <div class="item-head">
+            <h3>Application Android Anti-Gaspillage (OCR &amp; VLM Hors Ligne)</h3>
+            <span class="item-date">2025 – 2026</span>
+          </div>
+          <p>Application mobile hors ligne dédiée à la lecture et au contrôle des dates de péremption pour limiter le gaspillage alimentaire, intégrant <strong>PaddleOCR</strong>, <strong>parseq_tiny</strong> et <strong>SmolVLM2-256M</strong>, avec communication vers un terminal <strong>Ingenico DX8000</strong>.</p>
+        </div>
+        <div class="item-block">
+          <div class="item-head">
+            <h3>Prototype Mécanique d'Insert de Marquage — Caterpillar M10</h3>
+            <span class="item-date">2026</span>
+          </div>
+          <p>Conception d'un prototype mécanique d'insert de marquage à encre pour douilles de serrage M10 afin de sécuriser le contrôle visuel qualité en assemblage industriel.</p>
+        </div>
+        <div class="item-block">
+          <div class="item-head">
+            <h3>CV Interactif 3D VRM &amp; Assistante IA</h3>
+            <span class="item-date">2026</span>
+          </div>
+          <p>Interface web construite avec Three.js et <code>@pixiv/three-vrm</code> (VRM1 Sample), animée selon le contexte conversationnel et connectée à Gemini via Cloudflare Worker.</p>
+        </div>
+      </section>
+
+      <!-- Section Expériences -->
+      <section class="cv-section" id="sec-experience">
+        <h2 class="sec-title">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>
+          Expériences Professionnelles
+        </h2>
+        <div class="item-block">
+          <div class="item-head">
+            <h3>Opérateur d'Assemblage Industriel — Caterpillar</h3>
+            <span class="item-date">Grenoble</span>
+          </div>
+          <p>Assemblage mécanique en environnement industriel exigeant, rigueur qualité et conception d'un prototype d'insert de marquage sur douille M10.</p>
+        </div>
+        <div class="item-block">
+          <div class="item-head">
+            <h3>Employé Commercial &amp; Gestion de Rayons — Grande Distribution</h3>
+            <span class="item-date">2023 – Présent</span>
+          </div>
+          <p>Mise en rayon, gestion de stock, suivi des dates limites de consommation et observation terrain à l'origine du projet d'application Android anti-gaspillage OCR/VLM.</p>
+        </div>
+        <div class="item-block">
+          <div class="item-head">
+            <h3>Technicien Support &amp; Déploiement — Ulisse Solidura</h3>
+            <span class="item-date">Isère</span>
+          </div>
+          <p>Maintenance matérielle et logicielle, déploiement de postes via serveur <strong>PXE</strong>, automatisation par scripts <strong>PowerShell</strong> et gestion de bases <strong>SQL</strong>.</p>
+        </div>
+      </section>
+
+      <!-- Section Formation -->
+      <section class="cv-section" id="sec-formation">
+        <h2 class="sec-title">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/></svg>
+          Formation
+        </h2>
+        <div class="item-block">
+          <div class="item-head">
+            <h3>POEI Développeur Java Fullstack — M2i Formation</h3>
+            <span class="item-date">Formation intensive</span>
+          </div>
+          <p>Développement Java, architecture applicative, Angular, services web et bases de données relationnelles SQL.</p>
+        </div>
+        <div class="item-block">
+          <div class="item-head">
+            <h3>Technicien d'Assistance en Informatique (TAI)</h3>
+            <span class="item-date">Titre professionnel</span>
+          </div>
+          <p>Support matériel/logiciel, administration de postes de travail, réseaux locaux et virtualisation.</p>
+        </div>
+        <div class="item-block">
+          <div class="item-head">
+            <h3>Licence Mathématiques &amp; Informatique Appliquées (Niveau Master 1)</h3>
+            <span class="item-date">Université Joseph Fourier — Grenoble I</span>
+          </div>
+          <p>Socle scientifique complet (Bac+3 avec niveau Master 1) en algorithmique, programmation, mathématiques appliquées et informatique.</p>
+        </div>
+      </section>
+
+      <!-- Section Intérêts -->
+      <section class="cv-section" id="sec-interets">
+        <h2 class="sec-title">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+          Centres d'Intérêt
+        </h2>
+        <div class="item-block">
+          <div class="item-head"><h3>IA Locale (Ollama, Qwen) &amp; Avatars 3D</h3></div>
+          <p>Expérimentation de modèles de langage locaux (Ollama, Qwen), vision embarquée légère et mise en scène d'avatars 3D temps réel.</p>
+        </div>
+        <div class="item-block">
+          <div class="item-head"><h3>Cyclisme Urbain à Grenoble</h3></div>
+          <p>Pratique régulière du vélo pour les déplacements quotidiens et les sorties autour de Grenoble.</p>
+        </div>
+        <div class="item-block">
+          <div class="item-head"><h3>Science-Fiction &amp; Narration Graphique</h3></div>
+          <p>Passion pour l'imaginaire, l'anticipation technologique, la science-fiction et la narration graphique.</p>
+        </div>
+      </section>
+
+      <!-- Section Contact -->
+      <section class="cv-section" id="sec-contact">
+        <h2 class="sec-title">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
+          Contact
+        </h2>
+        <p>Retrouvez Alexandre sur son site <a href="http://gheraibia.free.fr" target="_blank" rel="noopener" style="color:var(--accent)">http://gheraibia.free.fr</a>, sur <a href="https://github.com/AlexandreGheraibia" target="_blank" rel="noopener" style="color:var(--accent)">GitHub (AlexandreGheraibia)</a> ou préparez un message ci-dessous :</p>
+        <form class="contact-form" id="contact-form">
+          <input type="text" id="contact-name" placeholder="Votre nom / entreprise" required />
+          <input type="email" id="contact-email" placeholder="Votre adresse e-mail" required />
+          <textarea id="contact-msg" rows="4" placeholder="Votre message..." required></textarea>
+          <button type="submit">Préparer l'e-mail</button>
+        </form>
+      </section>
+    </article>
+  </main>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+    import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
+
+    // URL de ton Cloudflare Worker (remplace <ton-sous-domaine> par ton sous-domaine workers.dev)
+    const GEMINI_ENDPOINT = 'https://billowing-field-aa78.simurghe.workers.dev/';
+
+    // URL officielle du modèle Pixiv VRM1 Sample
+    const VRM1_SAMPLE_URL = 'https://pixiv.github.io/three-vrm/packages/three-vrm/examples/models/VRM1_Constraint_Twist_Sample.vrm';
+
+    const SECTION_META = {
+      'sec-parcours':    { title: 'PARCOURS',    sub: 'Licence MIA • Master 1 • M2i' },
+      'sec-competences': { title: 'COMPÉTENCES', sub: 'Java, C++, Python, IA & Linux' },
+      'sec-portfolio':   { title: 'PORTFOLIO',   sub: 'OCR Hors Ligne • M10 • 3D' },
+      'sec-experience':  { title: 'EXPÉRIENCES', sub: 'Caterpillar • Retail • Solidura' },
+      'sec-formation':   { title: 'FORMATION',   sub: 'UJF Grenoble • POEI • TAI' },
+      'sec-interets':    { title: 'INTÉRÊTS',    sub: 'IA Locale, 3D VRM & SF' },
+      'sec-contact':     { title: 'CONTACT',     sub: 'Grenoble • gheraibia.free.fr' }
+    };
+
+    // État global de la scène, de la voix et du dialogue
+    let currentVrm = null;
+    let voiceEnabled = true;
+    let isSpeaking = false;
+    let currentGesture = 'idle';
+    let gestureTimer = 0;
+    let currentEmotion = 'neutral';
+    const conversationHistory = [];
+
+    // Références DOM
+    const canvas = document.getElementById('vrm-canvas');
+    const statusDot = document.getElementById('status-dot');
+    const statusText = document.getElementById('status-text');
+    const assistantBubble = document.getElementById('assistant-bubble');
+    const aiCvCard = document.getElementById('ai-cv-card');
+    const aiCvQuestion = document.getElementById('ai-cv-question');
+    const aiCvAnswer = document.getElementById('ai-cv-answer');
+    const holoBox = document.getElementById('holo-box');
+    const holoTitle = document.getElementById('holo-title');
+    const holoSub = document.getElementById('holo-sub');
+
+    // Configuration Three.js
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(28, 1, 0.1, 20);
+    camera.position.set(0, 1.32, 1.55);
+
+    const controls = new OrbitControls(camera, canvas);
+    controls.target.set(0, 1.24, 0);
+    controls.enableDamping = true;
+    controls.minDistance = 0.75;
+    controls.maxDistance = 3.2;
+    controls.update();
+
+    const hemiLight = new THREE.HemisphereLight(0xffffff, 0x1e293b, 1.45);
+    scene.add(hemiLight);
+
+    const dirLight = new THREE.DirectionalLight(0xe0f2fe, 1.5);
+    dirLight.position.set(1.2, 2.2, 1.8);
+    scene.add(dirLight);
+
+    const rimLight = new THREE.DirectionalLight(0x38bdf8, 0.65);
+    rimLight.position.set(-1.4, 1.5, -1.2);
+    scene.add(rimLight);
+
+    function resizeRenderer() {
+      const rect = canvas.parentElement.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
+        renderer.setSize(rect.width, rect.height, false);
+        camera.aspect = rect.width / rect.height;
+        camera.updateProjectionMatrix();
+      }
+    }
+    window.addEventListener('resize', resizeRenderer);
+    resizeRenderer();
+
+    function resetCamera() {
+      camera.position.set(0, 1.32, 1.55);
+      controls.target.set(0, 1.24, 0);
+      controls.update();
+    }
+
+    document.getElementById('btn-reset-cam').addEventListener('click', resetCamera);
+
+    // Chargement du modèle officiel Pixiv VRM1 Sample via GLTFLoader + VRMLoaderPlugin
+    const loader = new GLTFLoader();
+    loader.register((parser) => new VRMLoaderPlugin(parser));
+
+    function loadVRM(url) {
+      statusDot.classList.remove('warn');
+      statusText.textContent = 'Chargement du modèle VRM1 Sample...';
+
+      loader.load(
+        url,
+        (gltf) => {
+          try {
+            const vrm = gltf.userData.vrm;
+            if (!vrm) {
+              throw new Error('Aucun objet VRM détecté dans le fichier.');
+            }
+
+            if (currentVrm) {
+              scene.remove(currentVrm.scene);
+              VRMUtils.deepDispose(currentVrm.scene);
+            }
+
+            VRMUtils.removeUnnecessaryVertices(gltf.scene);
+            if (typeof VRMUtils.combineMorphs === 'function') {
+              VRMUtils.combineMorphs(vrm);
+            }
+            VRMUtils.rotateVRM0(vrm);
+            scene.add(vrm.scene);
+            currentVrm = vrm;
+            resetCamera();
+
+            statusDot.classList.remove('warn');
+            statusText.textContent = 'Assistante VRM1 Sample prête (Worker + repli local)';
+            triggerGesture('wave', 'happy');
+          } catch (err) {
+            console.error('Erreur initialisation VRM :', err);
+            statusDot.classList.add('warn');
+            statusText.textContent = 'Erreur d’initialisation VRM — chargez un fichier .VRM ou réessayez';
+          }
+        },
+        (progress) => {
+          if (progress.total > 0) {
+            const pct = Math.min(100, Math.round((progress.loaded / progress.total) * 100));
+            statusText.textContent = `Chargement VRM1 Sample... ${pct}%`;
+          }
+        },
+        (err) => {
+          console.error('Échec chargement VRM :', err);
+          statusDot.classList.add('warn');
+          statusText.textContent = 'Chargement VRM1 distant indisponible — glissez ou sélectionnez un .VRM';
+        }
+      );
+    }
+
+    loadVRM(VRM1_SAMPLE_URL);
+
+    // Chargement d'un fichier .VRM / .glb par bouton ou glisser-déposer
+    document.getElementById('vrm-file-input').addEventListener('change', (e) => {
+      const file = e.target.files?.[0];
+      if (file) {
+        loadVRM(URL.createObjectURL(file));
+      }
+    });
+
+    const dropZone = document.getElementById('drop-zone');
+    dropZone.addEventListener('dragover', (e) => e.preventDefault());
+    dropZone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      const file = e.dataTransfer?.files?.[0];
+      if (file) {
+        loadVRM(URL.createObjectURL(file));
+      }
+    });
+
+    // Gestes (wave, explain, nod, openBox) et émotions (happy, relaxed, surprised, neutral)
+    function triggerGesture(gesture = 'nod', emotion = 'neutral') {
+      const validGestures = ['wave', 'explain', 'nod', 'openBox', 'idle'];
+      const validEmotions = ['happy', 'relaxed', 'surprised', 'neutral'];
+      currentGesture = validGestures.includes(gesture) ? gesture : 'nod';
+      currentEmotion = validEmotions.includes(emotion) ? emotion : 'neutral';
+      gestureTimer = 2.4;
+    }
+
+    function applyEmotion(vrm, emotion) {
+      if (!vrm?.expressionManager) return;
+      const weights = { happy: 0, relaxed: 0, surprised: 0 };
+      if (emotion in weights) {
+        weights[emotion] = 0.65;
+      }
+      for (const [key, value] of Object.entries(weights)) {
+        try {
+          vrm.expressionManager.setValue(key, value);
+        } catch (_) {}
+      }
+    }
+
+    // Boucle d'animation du modèle VRM
+    const clock = new THREE.Clock();
+    function animate() {
+      requestAnimationFrame(animate);
+      const dt = Math.min(clock.getDelta(), 0.1);
+      const t = clock.elapsedTime;
+
+      if (gestureTimer > 0) {
+        gestureTimer -= dt;
+      } else if (currentGesture !== 'idle') {
+        currentGesture = 'idle';
+      }
+
+      if (currentVrm) {
+        const hum = currentVrm.humanoid;
+        const lUpperArm = hum?.getNormalizedBoneNode('leftUpperArm');
+        const rUpperArm = hum?.getNormalizedBoneNode('rightUpperArm');
+        const lLowerArm = hum?.getNormalizedBoneNode('leftLowerArm');
+        const rLowerArm = hum?.getNormalizedBoneNode('rightLowerArm');
+        const head = hum?.getNormalizedBoneNode('head');
+        const spine = hum?.getNormalizedBoneNode('spine');
+
+        // Posture détendue au repos (bras abaissés le long du corps en repère VRM 1.0)
+        if (lUpperArm) {
+          lUpperArm.rotation.z = -1.22 + Math.sin(t * 1.6) * 0.03;
+          lUpperArm.rotation.x = 0.06;
+        }
+        if (rUpperArm) {
+          rUpperArm.rotation.z = 1.22 - Math.sin(t * 1.6) * 0.03;
+          rUpperArm.rotation.x = 0.06;
+        }
+        if (lLowerArm) lLowerArm.rotation.z = -0.14;
+        if (rLowerArm) rLowerArm.rotation.z = 0.14;
+        if (spine) spine.rotation.x = Math.sin(t * 1.4) * 0.015;
+
+        // Geste actif
+        if (gestureTimer > 0) {
+          if (currentGesture === 'wave' && rUpperArm && rLowerArm) {
+            rUpperArm.rotation.z = 0.42;
+            rUpperArm.rotation.x = -0.15;
+            rLowerArm.rotation.z = 0.78 + Math.sin(t * 9) * 0.25;
+          } else if ((currentGesture === 'explain' || currentGesture === 'openBox') && lUpperArm && rUpperArm) {
+            lUpperArm.rotation.z = -0.88 + Math.sin(t * 4) * 0.08;
+            lUpperArm.rotation.x = -0.22;
+            rUpperArm.rotation.z = 0.88 - Math.sin(t * 4) * 0.08;
+            rUpperArm.rotation.x = -0.22;
+          } else if (currentGesture === 'nod' && head) {
+            head.rotation.x = Math.sin(t * 6) * 0.1;
+          }
+        } else if (head) {
+          head.rotation.x = Math.sin(t * 1.2) * 0.025;
+          head.rotation.y = Math.sin(t * 0.7) * 0.04;
+        }
+
+        // Synchronisation labiale avec la synthèse vocale française et expressions
+        if (currentVrm.expressionManager) {
+          const mouth = isSpeaking ? (0.25 + Math.abs(Math.sin(t * 16)) * 0.45) : 0;
+          try {
+            currentVrm.expressionManager.setValue('aa', mouth);
+          } catch (_) {}
+          applyEmotion(currentVrm, currentEmotion);
+        }
+
+        currentVrm.update(dt);
+      }
+
+      controls.update();
+      renderer.render(scene, camera);
+    }
+    animate();
+
+    // Synthèse vocale française
+    function speakFrench(text) {
+      if (!voiceEnabled || !('speechSynthesis' in window)) return;
+      try {
+        window.speechSynthesis.cancel();
+        const clean = text.replace(/[*#_`]/g, '');
+        const utter = new SpeechSynthesisUtterance(clean);
+        utter.lang = 'fr-FR';
+        utter.pitch = 1.12;
+        utter.rate = 1.03;
+
+        const voices = window.speechSynthesis.getVoices();
+        const frFemale = voices.find((v) =>
+          v.lang.toLowerCase().startsWith('fr') &&
+          /(amelie|audrey|aurelie|celine|charlotte|denise|julie|lea|marie|natural|google)/i.test(v.name)
+        ) || voices.find((v) => v.lang.toLowerCase().startsWith('fr'));
+        if (frFemale) utter.voice = frFemale;
+
+        utter.onstart = () => { isSpeaking = true; };
+        utter.onend = () => { isSpeaking = false; };
+        utter.onerror = () => { isSpeaking = false; };
+        window.speechSynthesis.speak(utter);
+      } catch (_) {
+        isSpeaking = false;
+      }
+    }
+
+    document.getElementById('btn-voice-toggle').addEventListener('click', (e) => {
+      voiceEnabled = !voiceEnabled;
+      e.currentTarget.classList.toggle('active-ok', voiceEnabled);
+      if (!voiceEnabled && 'speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+        isSpeaking = false;
+      }
+    });
+
+    // Navigation entre rubriques et mise à jour du badge holographique
+    function openSection(secId) {
+      if (!secId || !document.getElementById(secId)) return;
+      document.querySelectorAll('.cv-section').forEach((el) => el.classList.remove('active'));
+      document.getElementById(secId).classList.add('active');
+
+      document.querySelectorAll('#top-nav button').forEach((btn) => {
+        btn.classList.toggle('active', btn.dataset.sec === secId);
+      });
+
+      const meta = SECTION_META[secId];
+      if (meta) {
+        holoTitle.textContent = meta.title;
+        holoSub.textContent = meta.sub;
+        holoBox.classList.add('pulse');
+        setTimeout(() => holoBox.classList.remove('pulse'), 280);
+      }
+    }
+
+    document.querySelectorAll('#top-nav button').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        openSection(btn.dataset.sec);
+        triggerGesture('openBox', 'happy');
+      });
+    });
+
+    document.getElementById('nav-contact-link').addEventListener('click', (e) => {
+      e.preventDefault();
+      openSection('sec-contact');
+      triggerGesture('openBox', 'happy');
+    });
+
+    document.getElementById('btn-mail-shortcut').addEventListener('click', () => {
+      openSection('sec-contact');
+      triggerGesture('openBox', 'happy');
+    });
+
+    document.getElementById('ai-cv-close').addEventListener('click', () => {
+      aiCvCard.classList.add('hidden');
+    });
+
+    // Repli IA locale basé sur les faits du CV d'Alexandre Gheraibia
+    function localAssistantReply(question) {
+      const q = question.toLowerCase().trim();
+
+      if (/^(salut|bonjour|hello|coucou|bonsoir|hey|yo)\b/.test(q)) {
+        return {
+          reply: "Bonjour ! Je suis l'assistante d'Alexandre Gheraibia à Grenoble. Je peux vous présenter son parcours, ses compétences, ses projets IA et OCR hors ligne, ses expériences ou sa formation.",
+          section: 'sec-parcours',
+          gesture: 'wave',
+          emotion: 'happy'
+        };
+      }
+      if (/(projet|portfolio|ocr|vlm|android|paddleocr|parseq|smolvlm|ingenico|caterpillar|m10|anti-gaspi|gaspillage)/.test(q)) {
+        return {
+          reply: "Alexandre a développé une application Android anti-gaspillage fonctionnant hors ligne avec PaddleOCR, parseq_tiny et SmolVLM2-256M reliée à un terminal Ingenico DX8000, ainsi qu'un prototype mécanique d'insert de marquage sur douille M10 chez Caterpillar.",
+          section: 'sec-portfolio',
+          gesture: 'openBox',
+          emotion: 'happy'
+        };
+      }
+      if (/(comp[eé]tence|langage|stack|java|spring|c\+\+|python|angular|sql|linux|pxe|powershell|vmware)/.test(q)) {
+        return {
+          reply: "Alexandre maîtrise Java/Spring, C/C++, Python, Angular et SQL, ainsi que l'administration systèmes sous Linux, le déploiement PXE, PowerShell et VMware, en plus de l'IA embarquée hors ligne.",
+          section: 'sec-competences',
+          gesture: 'explain',
+          emotion: 'happy'
+        };
+      }
+      if (/(exp[eé]rience|travail|poste|caterpillar|ulisse|solidura|magasin|grande distribution|alimentaire)/.test(q)) {
+        return {
+          reply: "Son expérience inclut l'assemblage industriel chez Caterpillar à Grenoble, un poste d'employé commercial en grande distribution depuis 2023 à l'origine du projet anti-gaspillage, et le support/déploiement PXE, PowerShell et SQL chez Ulisse Solidura.",
+          section: 'sec-experience',
+          gesture: 'explain',
+          emotion: 'relaxed'
+        };
+      }
+      if (/(formation|dipl[oô]me|licence|master|ujf|grenoble|m2i|poei|tai)/.test(q)) {
+        return {
+          reply: "Alexandre est titulaire d'une Licence de Mathématiques et Informatique Appliquées (niveau Master 1) à l'Université Joseph Fourier de Grenoble, complétée par la POEI Développeur Java Fullstack chez M2i et la certification TAI.",
+          section: 'sec-formation',
+          gesture: 'nod',
+          emotion: 'happy'
+        };
+      }
+      if (/(int[eé]r[eê]t|passion|loisir|v[eé]lo|cyclisme|sf|science-fiction|3d|vrm|llm|ollama|qwen)/.test(q)) {
+        return {
+          reply: "À Grenoble, Alexandre pratique le cyclisme urbain et s'intéresse aux modèles de langage locaux (Ollama, Qwen), aux avatars 3D ainsi qu'à la science-fiction et la narration graphique.",
+          section: 'sec-interets',
+          gesture: 'nod',
+          emotion: 'relaxed'
+        };
+      }
+      if (/(contact|joindre|email|mail|github|site|web|grenoble)/.test(q)) {
+        return {
+          reply: "Vous pouvez retrouver Alexandre sur http://gheraibia.free.fr, sur GitHub sous AlexandreGheraibia, ou préparer un message via l'onglet Contact à droite.",
+          section: 'sec-contact',
+          gesture: 'openBox',
+          emotion: 'happy'
+        };
+      }
+      return {
+        reply: "Basé à Grenoble, Alexandre Gheraibia allie une Licence MIA (niveau Master 1) à l'UJF, une formation Java Fullstack chez M2i et la certification TAI, avec des réalisations en développement logiciel, systèmes PXE/Linux et IA OCR/VLM hors ligne.",
+        section: 'sec-parcours',
+        gesture: 'explain',
+        emotion: 'happy'
+      };
+    }
+
+    // Interrogation du Cloudflare Worker en POST JSON avec repli automatique sur localAssistantReply()
+    async function askAssistant(question) {
+      const cleanQ = question.trim();
+      if (!cleanQ) return;
+
+      statusDot.classList.remove('warn');
+      statusText.textContent = 'Réflexion de Gemini...';
+      triggerGesture('nod', 'neutral');
+
+      let result = null;
+
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 9000);
+
+        const res = await fetch(GEMINI_ENDPOINT, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            question: cleanQ,
+            history: conversationHistory.slice(-4)
+          }),
+          signal: controller.signal
+        });
+        clearTimeout(timer);
+
+        const text = await res.text();
+        if (!text.trim().startsWith('<?php') && !text.trim().startsWith('<')) {
+          const data = JSON.parse(text);
+          if (data && typeof data.reply === 'string' && data.reply.trim()) {
+            result = data;
+          }
+        }
+      } catch (_err) {
+        result = null;
+      }
+
+      if (!result) {
+        result = localAssistantReply(cleanQ);
+        statusDot.classList.add('warn');
+        statusText.textContent = 'Repli IA locale (Worker indisponible)';
+      } else {
+        statusDot.classList.remove('warn');
+        statusText.textContent = 'Connecté à Gemini via Cloudflare Worker';
+      }
+
+      conversationHistory.push({ role: 'user', text: cleanQ });
+      conversationHistory.push({ role: 'assistant', text: result.reply });
+
+      assistantBubble.textContent = result.reply;
+      aiCvQuestion.textContent = `« ${cleanQ} »`;
+      aiCvAnswer.textContent = result.reply;
+      aiCvCard.classList.remove('hidden');
+
+      if (result.section) {
+        openSection(result.section);
+      }
+
+      triggerGesture(result.gesture || 'explain', result.emotion || 'happy');
+      speakFrench(result.reply);
+    }
+
+    document.getElementById('chat-form').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const input = document.getElementById('chat-input');
+      const val = input.value;
+      input.value = '';
+      askAssistant(val);
+    });
+
+    document.querySelectorAll('.quick-prompts button').forEach((btn) => {
+      btn.addEventListener('click', () => askAssistant(btn.dataset.q));
+    });
+
+    document.getElementById('btn-pitch').addEventListener('click', () => {
+      askAssistant("Présente le parcours d'Alexandre");
+    });
+
+    document.getElementById('contact-form').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const name = document.getElementById('contact-name').value.trim();
+      const email = document.getElementById('contact-email').value.trim();
+      const msg = document.getElementById('contact-msg').value.trim();
+      const subject = encodeURIComponent(`Contact CV — ${name}`);
+      const body = encodeURIComponent(`De : ${name} (${email})\n\n${msg}`);
+      const confirmation = `Merci ${name}, votre message pour Alexandre est prêt dans votre client mail.`;
+      assistantBubble.textContent = confirmation;
+      aiCvQuestion.textContent = `« Formulaire de contact — ${name} »`;
+      aiCvAnswer.textContent = confirmation;
+      aiCvCard.classList.remove('hidden');
+      triggerGesture('openBox', 'happy');
+      speakFrench(confirmation);
+      window.location.href = `mailto:?subject=${subject}&body=${body}`;
+    });
+  </script>
+</body>
+</html>
