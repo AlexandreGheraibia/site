@@ -6,7 +6,7 @@ import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
 // URL de ton Cloudflare Worker
 const GEMINI_ENDPOINT = 'https://billowing-field-aa78.simurghe.workers.dev/';
 
-// URL officielle du modèle Pixiv VRM1 Sample
+// Modèle Pixiv VRM1 Sample
 const VRM1_SAMPLE_URL = 'https://pixiv.github.io/three-vrm/packages/three-vrm/examples/models/VRM1_Constraint_Twist_Sample.vrm';
 
 const SECTION_META = {
@@ -25,18 +25,33 @@ const PITCH_TEXT =
   "il a suivi un POEI développeur Java Fullstack chez M2i. Il combine développement logiciel, administration systèmes " +
   "et IA embarquée hors ligne, comme son application Android anti-gaspillage avec PaddleOCR, parseq_tiny et SmolVLM2-256M.";
 
-// État global de la scène, de la voix, de la gestuelle et du dialogue
+// --- État global ---
 let currentVrm = null;
 let voiceEnabled = true;
 let isSpeaking = false;
-let currentGesture = 'idle';
-let speechCue = 'talk';
-let speechEmphasis = 0.6;
-let gestureTimer = 0;
-let currentEmotion = 'neutral';
-let blinkTimer = 3.2;
+let blinkTimer = 2.9;
 let isBlinking = false;
 const conversationHistory = [];
+
+// État du moteur de chorégraphie de présentatrice
+const speechEngine = {
+  active: false,
+  text: '',
+  clauses: [],
+  clauseIndex: 0,
+  clauseElapsed: 0,
+  totalElapsed: 0,
+  estimatedTotalSec: 4,
+  gesture: 'present',      // 'idle' | 'greet' | 'present' | 'explain' | 'nod' | 'curious' | 'talk'
+  emotion: 'happy',        // 'neutral' | 'happy' | 'curious'
+  emphasis: 0.6,
+  wordAccent: 0,
+  pauseAmount: 0,
+  syllablePhase: 0,
+  lastCharIndex: -1
+};
+
+let speechFallbackTimer = null;
 
 // Références DOM
 const canvas = document.getElementById('vrm-canvas');
@@ -72,47 +87,215 @@ function setStatus(message, warn = false) {
   statusDot.classList.toggle('warn', warn);
 }
 
-// --- Pilotage gestuel & émotionnel ---
-function applyMotionPlan({ emotion, gesture, emphasis, text }) {
-  const allowedEmotions = ['neutral', 'happy', 'curious', 'emphatic'];
-  const allowedGestures = ['idle', 'nod', 'present', 'talk', 'explain'];
-  const lower = (text || '').toLowerCase();
+// --- Analyse prosodique & style de présentatrice ---
+function estimateSyllablesFr(str) {
+  const clean = (str || '').toLowerCase().replace(/[^a-zàâäéèêëîïôöùûüç0-9\s]/g, ' ');
+  const words = clean.trim().split(/\s+/).filter(Boolean);
+  let count = 0;
+  for (const w of words) {
+    const groups = w.match(/[aeiouyàâäéèêëîïôöùûü]+/g);
+    count += Math.max(1, groups ? groups.length : 1);
+  }
+  return Math.max(1, count);
+}
 
-  if (emotion && allowedEmotions.includes(emotion)) {
-    currentEmotion = emotion === 'emphatic' ? 'happy' : emotion;
-  } else if (/projet|ocr|vlm|ia|succès|passion|grenoble|bonjour/.test(lower)) {
-    currentEmotion = 'happy';
+function analyzeSpeechProsody(text, llmMeta = {}) {
+  const raw = (text || '').trim();
+  const segments = raw.match(/[^.!?;:…]+[.!?;:…]*/g) || [raw];
+
+  const allowedGestures = ['idle', 'greet', 'present', 'explain', 'nod', 'curious', 'talk'];
+  const allowedEmotions = ['neutral', 'happy', 'curious'];
+  const llmGesture = allowedGestures.includes(llmMeta.gesture) ? llmMeta.gesture : null;
+  const llmEmotion =
+    llmMeta.emotion === 'emphatic'
+      ? 'happy'
+      : allowedEmotions.includes(llmMeta.emotion)
+        ? llmMeta.emotion
+        : null;
+
+  let totalSec = 0;
+  const clauses = segments.map((part, idx) => {
+    const seg = part.trim();
+    const low = seg.toLowerCase();
+    const syllables = estimateSyllablesFr(seg);
+    const duration = Math.max(1.15, syllables / 4.2);
+    totalSec += duration;
+
+    const endsQuestion = /[?]\s*$/.test(seg);
+    const endsExclam = /[!…]\s*$/.test(seg);
+    const endsPause = /[,;:]\s*$/.test(seg);
+
+    // Par défaut, une présentatrice garde une attitude accueillante et structurée
+    let gesture = llmGesture || (idx % 2 === 0 ? 'present' : 'explain');
+    let emotion = llmEmotion || 'happy';
+    let emphasis = typeof llmMeta.emphasis === 'number'
+      ? Math.min(1, Math.max(0.3, llmMeta.emphasis))
+      : 0.62;
+
+    if (idx === 0 && /bonjour|salut|bienvenue|assistante/.test(low)) {
+      gesture = 'greet';
+      emotion = 'happy';
+      emphasis = Math.max(emphasis, 0.72);
+    } else if (endsQuestion) {
+      gesture = 'curious';
+      emotion = 'curious';
+      emphasis = Math.min(1, emphasis + 0.1);
+    } else if (/projet|portfolio|ocr|vlm|ia|caterpillar|ingénieur|développeur|application|prototype/.test(low)) {
+      gesture = 'present';
+      emotion = 'happy';
+      emphasis = Math.min(1, Math.max(emphasis, 0.78));
+    } else if (/parce que|donc|notamment|architecture|système|formation|compétence|licence|master|m2i|linux|pxe/.test(low)) {
+      gesture = 'explain';
+      emotion = llmEmotion || 'happy';
+      emphasis = Math.min(1, Math.max(emphasis, 0.68));
+    } else if (idx === segments.length - 1 && !endsExclam) {
+      gesture = 'nod';
+      emotion = 'happy';
+    }
+
+    if (endsExclam) {
+      emphasis = Math.min(1, emphasis + 0.14);
+      emotion = 'happy';
+    }
+
+    return {
+      text: seg,
+      low,
+      duration,
+      endsQuestion,
+      endsExclam,
+      endsPause,
+      gesture,
+      emotion,
+      emphasis
+    };
+  });
+
+  return { clauses, totalSec: Math.max(1.6, totalSec) };
+}
+
+function startSpeechChoreography(text, llmMeta = {}) {
+  const { clauses, totalSec } = analyzeSpeechProsody(text, llmMeta);
+  speechEngine.active = true;
+  speechEngine.text = text || '';
+  speechEngine.clauses = clauses;
+  speechEngine.clauseIndex = 0;
+  speechEngine.clauseElapsed = 0;
+  speechEngine.totalElapsed = 0;
+  speechEngine.estimatedTotalSec = totalSec;
+  speechEngine.lastCharIndex = -1;
+  speechEngine.pauseAmount = 0;
+  speechEngine.wordAccent = 0.45;
+
+  const first = clauses[0];
+  if (first) {
+    speechEngine.gesture = first.gesture;
+    speechEngine.emotion = first.emotion;
+    speechEngine.emphasis = first.emphasis;
   } else {
-    currentEmotion = 'neutral';
+    speechEngine.gesture = 'present';
+    speechEngine.emotion = 'happy';
+    speechEngine.emphasis = 0.62;
+  }
+}
+
+function stopSpeechChoreography() {
+  speechEngine.active = false;
+  speechEngine.pauseAmount = 0;
+  speechEngine.wordAccent = 0;
+  if (speechFallbackTimer) {
+    clearTimeout(speechFallbackTimer);
+    speechFallbackTimer = null;
+  }
+}
+
+function triggerTransientGesture(gesture, emotion = 'happy', emphasis = 0.65) {
+  const allowedGestures = ['idle', 'greet', 'present', 'explain', 'nod', 'curious', 'talk'];
+  if (allowedGestures.includes(gesture)) {
+    speechEngine.gesture = gesture;
+  }
+  if (emotion) {
+    speechEngine.emotion = emotion;
+  }
+  speechEngine.emphasis = Math.min(1, Math.max(0.25, emphasis));
+  speechEngine.wordAccent = Math.min(1, speechEngine.wordAccent + 0.35);
+}
+
+function onSpeechWordBoundary(text, charIndex) {
+  if (!speechEngine.active || !text) return;
+  if (typeof charIndex === 'number' && charIndex === speechEngine.lastCharIndex) return;
+  if (typeof charIndex === 'number') speechEngine.lastCharIndex = charIndex;
+
+  speechEngine.wordAccent = Math.min(1, speechEngine.wordAccent + 0.65);
+  speechEngine.syllablePhase += 1.35;
+
+  if (typeof charIndex === 'number') {
+    const tokenMatch = text.slice(charIndex).match(/^[^\s.,!?;:…]+([.,!?;:…]*)/);
+    const word = (tokenMatch?.[0] || '').toLowerCase();
+    const punct = tokenMatch?.[1] || '';
+
+    if (/[?!…]/.test(punct)) {
+      speechEngine.emphasis = Math.min(1, speechEngine.emphasis + 0.14);
+      if (punct.includes('?')) {
+        speechEngine.gesture = 'curious';
+        speechEngine.emotion = 'curious';
+      } else {
+        speechEngine.gesture = 'present';
+        speechEngine.emotion = 'happy';
+      }
+    } else if (/[,;:]/.test(punct)) {
+      speechEngine.pauseAmount = 0.8;
+    }
+
+    if (/projet|ocr|vlm|ia|grenoble|java|python|linux|caterpillar|prototype/.test(word)) {
+      speechEngine.gesture = 'present';
+      speechEngine.emotion = 'happy';
+      speechEngine.emphasis = Math.min(1, Math.max(speechEngine.emphasis, 0.78));
+    } else if (/donc|notamment|système|formation|parcours|architecture/.test(word)) {
+      speechEngine.gesture = 'explain';
+    }
+  }
+}
+
+function stepSpeechChoreography(delta) {
+  if (!speechEngine.active) {
+    speechEngine.wordAccent = Math.max(0, speechEngine.wordAccent - delta * 3.5);
+    speechEngine.pauseAmount = Math.max(0, speechEngine.pauseAmount - delta * 3.0);
+    return;
   }
 
-  if (gesture && allowedGestures.includes(gesture)) {
-    currentGesture = gesture;
-    speechCue = gesture;
-  } else if (/projet|portfolio|ocr|vlm|caterpillar|ingénieur|développeur/.test(lower)) {
-    currentGesture = 'present';
-    speechCue = 'present';
-  } else if (/[?]/.test(lower)) {
-    currentGesture = 'nod';
-    speechCue = 'curious';
-  } else if (/parce que|donc|notamment|architecture|système|formation|compétence/.test(lower)) {
-    currentGesture = 'explain';
-    speechCue = 'explain';
-  } else {
-    currentGesture = 'talk';
-    speechCue = 'talk';
+  speechEngine.totalElapsed += delta;
+  speechEngine.clauseElapsed += delta;
+  speechEngine.wordAccent = Math.max(0, speechEngine.wordAccent - delta * 3.2);
+  speechEngine.pauseAmount = Math.max(0, speechEngine.pauseAmount - delta * 2.8);
+
+  const clauses = speechEngine.clauses;
+  const current = clauses[speechEngine.clauseIndex];
+  if (!current) return;
+
+  const remaining = current.duration - speechEngine.clauseElapsed;
+  if (remaining > 0 && remaining < 0.24 && (current.endsPause || /[.!?]$/.test(current.text))) {
+    speechEngine.pauseAmount = Math.max(speechEngine.pauseAmount, 0.65);
   }
 
-  if (typeof emphasis === 'number' && !Number.isNaN(emphasis)) {
-    speechEmphasis = Math.min(1, Math.max(0.2, emphasis));
-  } else {
-    const exclamBoost = /!/.test(lower) ? 0.2 : 0;
-    const questBoost = /[?]/.test(lower) ? 0.1 : 0;
-    speechEmphasis = Math.min(1, 0.45 + Math.min(lower.length / 260, 0.3) + exclamBoost + questBoost);
+  if (speechEngine.lastCharIndex < 0) {
+    speechEngine.syllablePhase += delta * 11.5 * (1 - speechEngine.pauseAmount * 0.6);
+    if (Math.sin(speechEngine.syllablePhase * 0.5) > 0.94 && speechEngine.wordAccent < 0.2) {
+      speechEngine.wordAccent = 0.45;
+    }
   }
 
-  const len = (text || '').length;
-  gestureTimer = Math.min(7, Math.max(1.8, len * 0.032));
+  if (speechEngine.clauseElapsed >= current.duration && speechEngine.clauseIndex < clauses.length - 1) {
+    speechEngine.clauseIndex += 1;
+    speechEngine.clauseElapsed = 0;
+    const next = clauses[speechEngine.clauseIndex];
+    if (next) {
+      speechEngine.gesture = next.gesture;
+      speechEngine.emotion = next.emotion;
+      speechEngine.emphasis = next.emphasis;
+      speechEngine.pauseAmount = 0.45;
+    }
+  }
 }
 
 // --- Navigation entre rubriques du CV ---
@@ -135,16 +318,20 @@ function activateSection(secId) {
   void holoBox.offsetWidth;
   holoBox.classList.add('pulse');
 
-  currentGesture = secId === 'sec-portfolio' ? 'present' : 'nod';
-  speechCue = currentGesture;
-  gestureTimer = 1.6;
+  if (!isSpeaking) {
+    triggerTransientGesture(secId === 'sec-portfolio' ? 'present' : 'nod', 'happy', 0.68);
+    setTimeout(() => {
+      if (!isSpeaking && !speechEngine.active) {
+        speechEngine.gesture = 'idle';
+        speechEngine.emotion = 'happy';
+      }
+    }, 1600);
+  }
 }
 
 topNav.addEventListener('click', (e) => {
   const btn = e.target.closest('button[data-sec]');
-  if (btn) {
-    activateSection(btn.dataset.sec);
-  }
+  if (btn) activateSection(btn.dataset.sec);
 });
 
 navContactLink.addEventListener('click', (e) => {
@@ -185,38 +372,47 @@ function pickFrenchVoice() {
   );
 }
 
-function speakText(text) {
-  if (!voiceEnabled || !('speechSynthesis' in window) || !text) return;
+function speakText(text, llmMeta = {}) {
+  if (!text) return;
+
+  stopSpeechChoreography();
+  startSpeechChoreography(text, llmMeta);
+
+  if (!voiceEnabled || !('speechSynthesis' in window)) {
+    isSpeaking = true;
+    speechFallbackTimer = setTimeout(() => {
+      isSpeaking = false;
+      stopSpeechChoreography();
+      speechEngine.gesture = 'idle';
+      speechEngine.emotion = 'happy';
+    }, Math.max(1600, speechEngine.estimatedTotalSec * 1000));
+    return;
+  }
 
   window.speechSynthesis.cancel();
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.lang = 'fr-FR';
-  utterance.rate = 1.03;
-  utterance.pitch = currentEmotion === 'happy' ? 1.08 : 1.02;
+  utterance.rate = 1.02;
+  utterance.pitch = speechEngine.emotion === 'happy' ? 1.06 : 1.02;
 
   const frVoice = pickFrenchVoice();
   if (frVoice) utterance.voice = frVoice;
 
   utterance.onboundary = (event) => {
-    if (event.name === 'word') {
-      gestureTimer = Math.max(gestureTimer, 0.35);
-      speechEmphasis = Math.min(1, speechEmphasis + 0.06);
+    if (!event.name || event.name === 'word') {
+      onSpeechWordBoundary(text, event.charIndex);
     }
   };
 
   utterance.onstart = () => {
     isSpeaking = true;
-    if (currentGesture === 'idle') {
-      currentGesture = 'talk';
-    }
   };
 
   utterance.onend = utterance.onerror = () => {
     isSpeaking = false;
-    if (gestureTimer <= 0.1) {
-      currentGesture = 'idle';
-      speechCue = 'idle';
-    }
+    stopSpeechChoreography();
+    speechEngine.gesture = 'idle';
+    speechEngine.emotion = 'happy';
   };
 
   window.speechSynthesis.speak(utterance);
@@ -233,6 +429,8 @@ btnVoiceToggle.addEventListener('click', () => {
   if (!voiceEnabled && 'speechSynthesis' in window) {
     window.speechSynthesis.cancel();
     isSpeaking = false;
+    stopSpeechChoreography();
+    speechEngine.gesture = 'idle';
   }
   setStatus(voiceEnabled ? 'Voix française activée.' : 'Voix coupée.');
 });
@@ -243,13 +441,7 @@ btnPitch.addEventListener('click', () => {
   aiCvCard.classList.remove('hidden');
   aiCvQuestion.textContent = 'Présentation synthétique';
   aiCvAnswer.textContent = PITCH_TEXT;
-  applyMotionPlan({
-    emotion: 'happy',
-    gesture: 'present',
-    emphasis: 0.78,
-    text: PITCH_TEXT
-  });
-  speakText(PITCH_TEXT);
+  speakText(PITCH_TEXT, { emotion: 'happy', gesture: 'present', emphasis: 0.75 });
 });
 
 // --- Scène Three.js & @pixiv/three-vrm ---
@@ -315,7 +507,6 @@ function attachVrm(vrm, label) {
   disposeCurrentVrm();
   VRMUtils.removeUnnecessaryVertices(vrm.scene);
 
-  // VRM 0.x regarde vers +Z : rotateVRM0 l'oriente vers -Z ; VRM 1.0 est déjà orienté vers -Z
   if (vrm.meta?.metaVersion === '0') {
     VRMUtils.rotateVRM0(vrm);
   }
@@ -327,6 +518,14 @@ function attachVrm(vrm, label) {
   currentVrm = vrm;
   scene.add(vrm.scene);
   setStatus(`Modèle chargé : ${label}`, false);
+
+  // Petit accueil de présentatrice au chargement
+  triggerTransientGesture('greet', 'happy', 0.65);
+  setTimeout(() => {
+    if (!isSpeaking && !speechEngine.active) {
+      speechEngine.gesture = 'idle';
+    }
+  }, 1800);
 }
 
 function loadVrmFromUrl(url, label = 'VRM1 Sample') {
@@ -397,111 +596,211 @@ dropZone.addEventListener('drop', (e) => {
 
 loadVrmFromUrl(VRM1_SAMPLE_URL, 'VRM1 Sample');
 
-// --- Animation, gestuelle liée au texte, clignement et lip-sync ---
+// --- Chorégraphie de présentatrice / assistante ---
 const clock = new THREE.Clock();
+
+function lerpBoneRot(bone, tx, ty, tz, smooth) {
+  if (!bone) return;
+  bone.rotation.x = THREE.MathUtils.lerp(bone.rotation.x, tx, smooth);
+  bone.rotation.y = THREE.MathUtils.lerp(bone.rotation.y, ty, smooth);
+  bone.rotation.z = THREE.MathUtils.lerp(bone.rotation.z, tz, smooth);
+}
+
+function setExprSafe(expr, name, value) {
+  if (!expr) return;
+  const map = expr.expressionMap;
+  if (map && Object.prototype.hasOwnProperty.call(map, name)) {
+    expr.setValue(name, Math.max(0, Math.min(1, value)));
+  }
+}
+
+function updateMouthArticulation(expr, elapsed, amp, pauseFactor, accent) {
+  if (!expr) return;
+
+  if (!isSpeaking && !speechEngine.active) {
+    setExprSafe(expr, 'aa', 0);
+    setExprSafe(expr, 'oh', 0);
+    setExprSafe(expr, 'ih', 0);
+    return;
+  }
+
+  const s1 = Math.sin(elapsed * 13.5 + speechEngine.syllablePhase * 0.25);
+  const s2 = Math.cos(elapsed * 7.8);
+  const rawEnvelope = Math.max(0, 0.52 + 0.34 * s1 + 0.18 * s2 + accent * 0.25);
+  const energy = rawEnvelope * pauseFactor * (0.48 + 0.36 * amp);
+
+  const vowelCycle = Math.sin(elapsed * 4.3);
+  const aaVal = Math.min(0.85, energy * (vowelCycle >= -0.35 ? 1.0 : 0.45));
+  const ohVal = Math.min(0.55, energy * (vowelCycle > 0.25 ? 0.55 : 0.15));
+  const ihVal = Math.min(0.45, energy * (vowelCycle < -0.2 ? 0.45 : 0.1));
+
+  setExprSafe(expr, 'aa', aaVal);
+  setExprSafe(expr, 'oh', ohVal);
+  setExprSafe(expr, 'ih', ihVal);
+}
 
 function updateAvatarAnimation(elapsed, delta) {
   if (!currentVrm) return;
 
-  if (gestureTimer > 0) {
-    gestureTimer = Math.max(0, gestureTimer - delta);
-    if (gestureTimer === 0 && !isSpeaking) {
-      currentGesture = 'idle';
-      speechCue = 'idle';
-      currentEmotion = 'neutral';
-    }
+  stepSpeechChoreography(delta);
+
+  const smooth = 1 - Math.exp(-delta * 8.5);
+  const speakingActive = isSpeaking || speechEngine.active;
+  const mode = speakingActive ? speechEngine.gesture : speechEngine.gesture;
+  const amp = speechEngine.emphasis;
+  const accent = speechEngine.wordAccent;
+  const pauseFactor = Math.max(0.18, 1.0 - speechEngine.pauseAmount * 0.78);
+
+  const humanoid = currentVrm.humanoid;
+  const spine = humanoid?.getNormalizedBoneNode('spine');
+  const chest = humanoid?.getNormalizedBoneNode('chest');
+  const neck = humanoid?.getNormalizedBoneNode('neck');
+  const head = humanoid?.getNormalizedBoneNode('head');
+
+  const lShoulder = humanoid?.getNormalizedBoneNode('leftShoulder');
+  const rShoulder = humanoid?.getNormalizedBoneNode('rightShoulder');
+  const lUpper = humanoid?.getNormalizedBoneNode('leftUpperArm');
+  const rUpper = humanoid?.getNormalizedBoneNode('rightUpperArm');
+  const lLower = humanoid?.getNormalizedBoneNode('leftLowerArm');
+  const rLower = humanoid?.getNormalizedBoneNode('rightLowerArm');
+  const lHand = humanoid?.getNormalizedBoneNode('leftHand');
+  const rHand = humanoid?.getNormalizedBoneNode('rightHand');
+
+  // 1. Posture de présentatrice : buste droit, léger accueil vers la fiche CV à droite
+  const breath = Math.sin(elapsed * 1.9) * 0.015;
+  const presenterYaw = speakingActive ? -0.055 * amp : -0.025;
+  lerpBoneRot(
+    spine,
+    breath * 0.55 + accent * 0.018 * amp * pauseFactor,
+    presenterYaw * 0.6 + Math.sin(elapsed * 0.7) * 0.015,
+    0,
+    smooth
+  );
+  lerpBoneRot(
+    chest,
+    breath + (mode === 'explain' ? 0.02 * amp : 0) + accent * 0.018 * amp * pauseFactor,
+    presenterYaw + (mode === 'present' ? -0.035 * amp : 0),
+    0,
+    smooth
+  );
+
+  // 2. Tête & regard orientés vers le public et la rubrique présentée
+  let headX = Math.sin(elapsed * 1.35) * 0.018;
+  let headY = presenterYaw * 0.5 + Math.cos(elapsed * 0.9) * 0.025;
+  let headZ = Math.sin(elapsed * 0.65) * 0.012;
+
+  if (mode === 'nod') {
+    headX += Math.sin(elapsed * 7.0) * 0.07 * amp;
+  } else if (mode === 'greet') {
+    headX += 0.045 * Math.sin(elapsed * 3.0);
+    headZ += 0.035;
+  } else if (mode === 'present') {
+    headY += -0.06 * amp + Math.sin(elapsed * 2.2) * 0.03 * amp;
+    headX += (Math.sin(elapsed * 3.8) * 0.018 + accent * 0.035) * amp * pauseFactor;
+  } else if (mode === 'explain') {
+    headX += (Math.sin(elapsed * 4.4) * 0.03 + accent * 0.03) * amp * pauseFactor;
+    headY += Math.cos(elapsed * 2.6) * 0.045 * amp;
+    headZ += Math.sin(elapsed * 1.8) * 0.025 * amp;
+  } else if (mode === 'curious') {
+    headZ += 0.07 * amp;
+    headX += (Math.sin(elapsed * 3.6) * 0.022 + accent * 0.02) * amp;
+  } else if (speakingActive) {
+    headX += (Math.sin(elapsed * 5.0) * 0.028 + accent * 0.03) * amp * pauseFactor;
+    headY += Math.cos(elapsed * 3.4) * 0.038 * amp;
   }
 
-  const smooth = 1 - Math.exp(-delta * 10);
-  const activeMode = isSpeaking || gestureTimer > 0 ? (speechCue || currentGesture) : 'idle';
+  lerpBoneRot(neck, headX * 0.35, headY * 0.35, headZ * 0.35, smooth);
+  lerpBoneRot(head, headX * 0.65, headY * 0.65, headZ * 0.65, smooth);
 
-  const chest = currentVrm.humanoid?.getNormalizedBoneNode('chest');
-  const head = currentVrm.humanoid?.getNormalizedBoneNode('head');
-  const leftArm = currentVrm.humanoid?.getNormalizedBoneNode('leftUpperArm');
-  const rightArm = currentVrm.humanoid?.getNormalizedBoneNode('rightUpperArm');
+  // 3. Bras de présentatrice : posés et ouverts vers l'avant/droite, sans mouvements amples latéraux
+  const microBreathArm = Math.sin(elapsed * 1.9) * 0.012;
 
-  const breath = Math.sin(elapsed * 2.0) * 0.02;
-  if (chest) {
-    const targetChestX = breath + (activeMode === 'explain' ? 0.03 * speechEmphasis : 0);
-    const targetChestY = Math.sin(elapsed * 0.9) * (0.04 + 0.03 * speechEmphasis);
-    chest.rotation.x = THREE.MathUtils.lerp(chest.rotation.x, targetChestX, smooth);
-    chest.rotation.y = THREE.MathUtils.lerp(chest.rotation.y, targetChestY, smooth);
+  let lShZ = -0.03, rShZ = 0.03;
+  let lUpX = 0.06,  lUpY = 0.06,  lUpZ = -1.24 + microBreathArm;
+  let rUpX = 0.06,  rUpY = -0.06, rUpZ = 1.24 - microBreathArm;
+  let lLoX = -0.20, lLoY = 0.14,  lLoZ = 0.0;
+  let rLoX = -0.20, rLoY = -0.14, rLoZ = 0.0;
+  let lHaX = 0.03,  lHaY = 0.0,   lHaZ = -0.04;
+  let rHaX = 0.03,  rHaY = 0.0,   rHaZ = 0.04;
+
+  if (mode === 'greet') {
+    // Accueil élégant : main droite ouverte à hauteur de poitrine/épaule
+    rShZ = -0.04;
+    rUpX = -0.22;
+    rUpY = -0.22;
+    rUpZ = 0.54;
+    rLoX = -0.32;
+    rLoY = -1.05;
+    rHaZ = Math.sin(elapsed * 6.5) * 0.18;
+  } else if (mode === 'present') {
+    // Geste de présentatrice : main droite ouverte vers la fiche à droite, main gauche posée
+    const pulse = (Math.sin(elapsed * 2.8) * 0.03 + accent * 0.075) * amp * pauseFactor;
+    rShZ = -0.03;
+    rUpX = -0.24 * amp;
+    rUpY = -0.18 * amp;
+    rUpZ = 0.92 - pulse;
+    rLoX = -0.22;
+    rLoY = -0.62 * amp - pulse;
+    rHaX = -0.10;
+
+    lUpX = 0.04;
+    lUpZ = -1.20;
+    lLoX = -0.24;
+    lLoY = 0.22;
+  } else if (mode === 'explain') {
+    // Explication structurée : deux avant-bras modérés devant le buste
+    const waveL = (Math.sin(elapsed * 3.0) * 0.06 + accent * 0.065) * amp * pauseFactor;
+    const waveR = (Math.sin(elapsed * 3.0 + 0.8) * 0.06 + accent * 0.065) * amp * pauseFactor;
+    lUpX = -0.12 * amp;
+    rUpX = -0.12 * amp;
+    lUpZ = -1.14 + waveL * 0.3;
+    rUpZ = 1.14 - waveR * 0.3;
+    lLoX = -0.24;
+    rLoX = -0.24;
+    lLoY = 0.48 * amp + waveL;
+    rLoY = -0.48 * amp - waveR;
+  } else if (mode === 'curious') {
+    // Écoute / question : main droite légèrement levée avec retenue
+    rUpX = -0.16 * amp;
+    rUpY = -0.12 * amp;
+    rUpZ = 1.04 - accent * 0.05 * amp;
+    rLoX = -0.34;
+    rLoY = -1.02;
+  } else if (speakingActive) {
+    // Parole posée : léger accompagnement de la main droite et de l'avant-bras
+    const beatR = (Math.sin(elapsed * 3.2) * 0.045 + accent * 0.065) * amp * pauseFactor;
+    const beatL = (Math.cos(elapsed * 2.7) * 0.03 + accent * 0.035) * amp * pauseFactor;
+    rUpX = -0.10 * amp;
+    rUpZ = 1.15 - beatR * 0.22;
+    rLoY = -0.36 * amp - beatR;
+    lLoY = 0.18 * amp + beatL;
   }
 
-  if (head) {
-    let targetPitch = Math.sin(elapsed * 1.5) * 0.025;
-    let targetYaw = Math.cos(elapsed * 1.1) * 0.04;
-    let targetRoll = 0;
+  lerpBoneRot(lShoulder, 0, 0, lShZ, smooth);
+  lerpBoneRot(rShoulder, 0, 0, rShZ, smooth);
+  lerpBoneRot(lUpper, lUpX, lUpY, lUpZ, smooth);
+  lerpBoneRot(rUpper, rUpX, rUpY, rUpZ, smooth);
+  lerpBoneRot(lLower, lLoX, lLoY, lLoZ, smooth);
+  lerpBoneRot(rLower, rLoX, rLoY, rLoZ, smooth);
+  lerpBoneRot(lHand, lHaX, lHaY, lHaZ, smooth);
+  lerpBoneRot(rHand, rHaX, rHaY, rHaZ, smooth);
 
-    if (activeMode === 'nod') {
-      targetPitch += Math.sin(elapsed * 8.5) * 0.09 * speechEmphasis;
-    } else if (activeMode === 'present') {
-      targetPitch += Math.sin(elapsed * 4.5) * 0.03 * speechEmphasis;
-      targetYaw += Math.sin(elapsed * 2.6) * 0.08 * speechEmphasis;
-    } else if (activeMode === 'explain') {
-      targetPitch += Math.sin(elapsed * 5.2) * 0.045 * speechEmphasis;
-      targetYaw += Math.cos(elapsed * 3.1) * 0.06 * speechEmphasis;
-      targetRoll = Math.sin(elapsed * 2.2) * 0.04 * speechEmphasis;
-    } else if (activeMode === 'curious') {
-      targetRoll = 0.075 * speechEmphasis;
-      targetPitch += Math.sin(elapsed * 4.0) * 0.03 * speechEmphasis;
-    } else if (activeMode === 'talk' || isSpeaking) {
-      targetPitch += Math.sin(elapsed * 6.8) * 0.045 * speechEmphasis;
-      targetYaw += Math.cos(elapsed * 4.6) * 0.055 * speechEmphasis;
-    }
-
-    head.rotation.x = THREE.MathUtils.lerp(head.rotation.x, targetPitch, smooth);
-    head.rotation.y = THREE.MathUtils.lerp(head.rotation.y, targetYaw, smooth);
-    head.rotation.z = THREE.MathUtils.lerp(head.rotation.z, targetRoll, smooth);
-  }
-
-  if (leftArm && rightArm) {
-    let targetLeftZ = -1.15 + Math.sin(elapsed * 1.6) * 0.03;
-    let targetRightZ = 1.15 - Math.sin(elapsed * 1.6) * 0.03;
-    let targetLeftX = 0;
-    let targetRightX = 0;
-
-    if (activeMode === 'present') {
-      targetRightZ = 0.62 - Math.sin(elapsed * 3.2) * 0.06 * speechEmphasis;
-      targetRightX = -0.35 * speechEmphasis;
-      targetLeftZ = -1.02 + Math.sin(elapsed * 2.4) * 0.04 * speechEmphasis;
-    } else if (activeMode === 'explain') {
-      const wave = Math.sin(elapsed * 3.4) * 0.14 * speechEmphasis;
-      targetLeftZ = -0.92 + wave;
-      targetRightZ = 0.92 - wave;
-      targetLeftX = -0.18 * speechEmphasis;
-      targetRightX = -0.18 * speechEmphasis;
-    } else if (isSpeaking) {
-      targetLeftZ = -1.06 + Math.sin(elapsed * 3.8) * 0.08 * speechEmphasis;
-      targetRightZ = 1.06 - Math.cos(elapsed * 3.5) * 0.08 * speechEmphasis;
-    }
-
-    leftArm.rotation.z = THREE.MathUtils.lerp(leftArm.rotation.z, targetLeftZ, smooth);
-    rightArm.rotation.z = THREE.MathUtils.lerp(rightArm.rotation.z, targetRightZ, smooth);
-    leftArm.rotation.x = THREE.MathUtils.lerp(leftArm.rotation.x, targetLeftX, smooth);
-    rightArm.rotation.x = THREE.MathUtils.lerp(rightArm.rotation.x, targetRightX, smooth);
-  }
-
-  // Clignement d'yeux naturel + bouche pendant la parole
+  // 4. Clignement, sourire d'assistante & articulation labiale
   const expr = currentVrm.expressionManager;
   if (expr) {
     blinkTimer -= delta;
     if (blinkTimer <= 0) {
       isBlinking = !isBlinking;
-      blinkTimer = isBlinking ? 0.12 : 2.8 + Math.random() * 2.5;
+      blinkTimer = isBlinking ? 0.12 : 2.8 + Math.random() * 2.4;
     }
-    expr.setValue('blink', isBlinking ? 1.0 : 0.0);
+    setExprSafe(expr, 'blink', isBlinking ? 1.0 : 0.0);
 
-    const syllableMod =
-      0.55 +
-      0.3 * Math.sin(elapsed * 14.5) +
-      0.15 * Math.cos(elapsed * 7.2);
-    const mouthOpen = isSpeaking
-      ? Math.max(0, Math.min(0.85, syllableMod * (0.45 + 0.4 * speechEmphasis)))
-      : 0.0;
+    updateMouthArticulation(expr, elapsed, amp, pauseFactor, accent);
 
-    expr.setValue('aa', mouthOpen);
-    expr.setValue('happy', currentEmotion === 'happy' ? 0.45 : 0.0);
+    const emo = speakingActive ? speechEngine.emotion : 'happy';
+    setExprSafe(expr, 'happy', emo === 'happy' ? (speakingActive ? 0.42 : 0.28) : 0.0);
+    setExprSafe(expr, 'surprised', emo === 'curious' ? 0.18 : 0.0);
+
     expr.update();
   }
 
@@ -520,7 +819,7 @@ function animate() {
 
 animate();
 
-// --- Dialogue & appel au Cloudflare Worker ---
+// --- Dialogue & appel au Cloudflare Worker (avec retry 503) ---
 function inferSectionFromQuestion(question) {
   const q = question.toLowerCase();
   if (q.includes('compétence') || q.includes('competence') || q.includes('stack') || q.includes('java') || q.includes('python')) {
@@ -544,6 +843,36 @@ function inferSectionFromQuestion(question) {
   return 'sec-parcours';
 }
 
+async function fetchGeminiWithRetry(payload, retries = 2) {
+  let lastError = null;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const res = await fetch(GEMINI_ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      if (res.status === 503 && attempt < retries) {
+        await new Promise((r) => setTimeout(r, 450 * (attempt + 1)));
+        continue;
+      }
+
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+
+      return await res.json();
+    } catch (err) {
+      lastError = err;
+      if (attempt < retries) {
+        await new Promise((r) => setTimeout(r, 450 * (attempt + 1)));
+      }
+    }
+  }
+  throw lastError;
+}
+
 async function askAssistant(question) {
   const cleanQ = question.trim();
   if (!cleanQ) return;
@@ -555,28 +884,17 @@ async function askAssistant(question) {
   aiCvQuestion.textContent = `« ${cleanQ} »`;
   aiCvAnswer.textContent = 'Réflexion en cours...';
   assistantBubble.textContent = 'Je consulte le profil d’Alexandre...';
-  currentGesture = 'nod';
-  speechCue = 'curious';
-  gestureTimer = 1.2;
+  triggerTransientGesture('curious', 'curious', 0.6);
   setStatus('Connexion à l’assistante IA...', false);
 
   conversationHistory.push({ role: 'user', content: cleanQ });
 
   try {
-    const res = await fetch(GEMINI_ENDPOINT, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        question: cleanQ,
-        history: conversationHistory.slice(-6)
-      })
+    const data = await fetchGeminiWithRetry({
+      question: cleanQ,
+      history: conversationHistory.slice(-6)
     });
 
-    if (!res.ok) {
-      throw new Error(`HTTP ${res.status}`);
-    }
-
-    const data = await res.json();
     const answerText =
       data.answer ||
       data.reply ||
@@ -587,25 +905,22 @@ async function askAssistant(question) {
     aiCvAnswer.textContent = answerText;
     assistantBubble.textContent = answerText;
 
-    applyMotionPlan({
+    setStatus('Réponse reçue.', false);
+    speakText(answerText, {
       emotion: data.emotion,
       gesture: data.gesture,
-      emphasis: data.emphasis,
-      text: answerText
+      emphasis: data.emphasis
     });
-
-    setStatus('Réponse reçue.', false);
-    speakText(answerText);
   } catch (err) {
     console.error('Erreur Worker:', err);
+    stopSpeechChoreography();
     const fallback =
-      "La liaison avec le service IA n'a pas pu aboutir immédiatement. Vous pouvez parcourir directement la rubrique mise en avant à droite.";
+      "Le service IA est momentanément très sollicité. Vous pouvez consulter directement la rubrique affichée à droite.";
     aiCvAnswer.textContent = fallback;
     assistantBubble.textContent = fallback;
-    currentEmotion = 'neutral';
-    currentGesture = 'idle';
-    speechCue = 'idle';
-    setStatus('Service IA indisponible — consultation directe du CV.', true);
+    speechEngine.emotion = 'happy';
+    speechEngine.gesture = 'idle';
+    setStatus('Service IA temporairement saturé — consultation directe du CV.', true);
   }
 }
 
