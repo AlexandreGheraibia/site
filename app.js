@@ -30,6 +30,12 @@ let isBlinking = false;
 let speechFallbackTimer = null;
 const conversationHistory = [];
 
+// Signes détectés automatiquement pour abaisser les bras vers les hanches
+const armSigns = {
+  leftZ: 1,
+  rightZ: -1
+};
+
 const presenterState = {
   active: false,
   gesture: 'present',
@@ -77,6 +83,54 @@ function setStatus(message, warn = false) {
   statusDot.classList.toggle('warn', warn);
 }
 
+// --- Détection automatique du sens de rotation Z qui abaisse chaque bras ---
+function calibrateArmDownSigns(vrm) {
+  const h = vrm?.humanoid;
+  if (!h) return;
+
+  const hips = h.getNormalizedBoneNode('hips');
+  const lUpper = h.getNormalizedBoneNode('leftUpperArm');
+  const rUpper = h.getNormalizedBoneNode('rightUpperArm');
+  const lLower = h.getNormalizedBoneNode('leftLowerArm') || lUpper;
+  const rLower = h.getNormalizedBoneNode('rightLowerArm') || rUpper;
+
+  if (!hips || !lUpper || !rUpper) return;
+
+  const hipPos = new THREE.Vector3();
+  const posA = new THREE.Vector3();
+  const posB = new THREE.Vector3();
+
+  // Bras gauche
+  const origLZ = lUpper.rotation.z;
+  hips.getWorldPosition(hipPos);
+  lUpper.rotation.z = origLZ + 0.35;
+  vrm.update(0);
+  lLower.getWorldPosition(posA);
+
+  lUpper.rotation.z = origLZ - 0.35;
+  vrm.update(0);
+  lLower.getWorldPosition(posB);
+
+  lUpper.rotation.z = origLZ;
+  armSigns.leftZ = posA.distanceTo(hipPos) < posB.distanceTo(hipPos) ? 1 : -1;
+
+  // Bras droit
+  const origRZ = rUpper.rotation.z;
+  rUpper.rotation.z = origRZ + 0.35;
+  vrm.update(0);
+  rLower.getWorldPosition(posA);
+
+  rUpper.rotation.z = origRZ - 0.35;
+  vrm.update(0);
+  rLower.getWorldPosition(posB);
+
+  rUpper.rotation.z = origRZ;
+  armSigns.rightZ = posA.distanceTo(hipPos) < posB.distanceTo(hipPos) ? 1 : -1;
+
+  vrm.update(0);
+}
+
+// --- Découpage du speech en phrases avec gestes variés de présentatrice ---
 function parseSpeechClauses(text, llmMeta = {}) {
   const parts = (text || '')
     .match(/[^.!?;:…]+[.!?;:…]*/g)
@@ -436,4 +490,211 @@ function attachVrm(vrm, label) {
 
   currentVrm = vrm;
   scene.add(vrm.scene);
-  setStatus
+  calibrateArmDownSigns(vrm);
+  setStatus(`Modèle chargé : ${label}`, false);
+
+  presenterState.gesture = 'greet';
+  presenterState.emotion = 'happy';
+  presenterState.pulse = 0.85;
+  setTimeout(() => {
+    if (!isSpeaking && !presenterState.active) {
+      presenterState.gesture = 'idle';
+    }
+  }, 1800);
+}
+
+function loadVrmFromUrl(url, label = 'VRM1 Sample') {
+  setStatus(`Chargement de ${label}...`, false);
+  loader.load(
+    url,
+    (gltf) => {
+      const vrm = gltf.userData.vrm;
+      if (!vrm) {
+        setStatus("Le fichier ne contient pas de données VRM valides.", true);
+        return;
+      }
+      attachVrm(vrm, label);
+    },
+    undefined,
+    (err) => {
+      console.error('Erreur chargement VRM:', err);
+      setStatus("Impossible de charger le modèle VRM distant. Chargez un .VRM local.", true);
+    }
+  );
+}
+
+function loadVrmFromFile(file) {
+  if (!file) return;
+  const objectUrl = URL.createObjectURL(file);
+  setStatus(`Chargement de ${file.name}...`, false);
+  loader.load(
+    objectUrl,
+    (gltf) => {
+      URL.revokeObjectURL(objectUrl);
+      const vrm = gltf.userData.vrm;
+      if (!vrm) {
+        setStatus("Fichier .VRM / .GLB invalide.", true);
+        return;
+      }
+      attachVrm(vrm, file.name);
+    },
+    undefined,
+    (err) => {
+      URL.revokeObjectURL(objectUrl);
+      console.error('Erreur lecture fichier VRM:', err);
+      setStatus("Erreur lors de la lecture du fichier VRM.", true);
+    }
+  );
+}
+
+vrmFileInput.addEventListener('change', (e) => {
+  const file = e.target.files?.[0];
+  if (file) loadVrmFromFile(file);
+  vrmFileInput.value = '';
+});
+
+dropZone.addEventListener('dragover', (e) => {
+  e.preventDefault();
+  dropZone.classList.add('drag-over');
+});
+
+dropZone.addEventListener('dragleave', () => {
+  dropZone.classList.remove('drag-over');
+});
+
+dropZone.addEventListener('drop', (e) => {
+  e.preventDefault();
+  dropZone.classList.remove('drag-over');
+  const file = e.dataTransfer?.files?.[0];
+  if (file) loadVrmFromFile(file);
+});
+
+loadVrmFromUrl(VRM1_SAMPLE_URL, 'VRM1 Sample');
+
+// --- Animation avec sens d'abaissement calibré automatiquement ---
+const clock = new THREE.Clock();
+
+function rotTo(bone, x, y, z, alpha) {
+  if (!bone) return;
+  bone.rotation.x = THREE.MathUtils.lerp(bone.rotation.x, x, alpha);
+  bone.rotation.y = THREE.MathUtils.lerp(bone.rotation.y, y, alpha);
+  bone.rotation.z = THREE.MathUtils.lerp(bone.rotation.z, z, alpha);
+}
+
+function setExpr(expr, name, val) {
+  if (!expr?.expressionMap || !Object.prototype.hasOwnProperty.call(expr.expressionMap, name)) return;
+  expr.setValue(name, Math.max(0, Math.min(1, val)));
+}
+
+function updateAvatarAnimation(elapsed, delta) {
+  if (!currentVrm) return;
+
+  updateSpeechState(delta);
+
+  const alpha = 1 - Math.exp(-delta * 7.5);
+  const speaking = isSpeaking || presenterState.active;
+  const g = presenterState.gesture;
+  const pulse = presenterState.pulse;
+  const pauseMul = Math.max(0.2, 1 - presenterState.pause * 0.75);
+
+  const h = currentVrm.humanoid;
+  const chest = h?.getNormalizedBoneNode('chest');
+  const head = h?.getNormalizedBoneNode('head');
+  const lUpper = h?.getNormalizedBoneNode('leftUpperArm');
+  const rUpper = h?.getNormalizedBoneNode('rightUpperArm');
+  const lLower = h?.getNormalizedBoneNode('leftLowerArm');
+  const rLower = h?.getNormalizedBoneNode('rightLowerArm');
+  const rHand = h?.getNormalizedBoneNode('rightHand');
+
+  const breath = Math.sin(elapsed * 2.0) * 0.022;
+  rotTo(
+    chest,
+    breath + (speaking ? pulse * 0.035 * pauseMul : 0),
+    (speaking ? -0.10 : -0.03) + Math.sin(elapsed * 1.1) * 0.025,
+    0,
+    alpha
+  );
+
+  let headX = Math.sin(elapsed * 1.5) * 0.025;
+  let headY = (speaking ? -0.09 : -0.03) + Math.cos(elapsed * 1.2) * 0.035;
+  let headZ = 0;
+
+  if (g === 'greet') {
+    headX += Math.sin(elapsed * 4.5) * 0.07;
+    headZ += 0.07;
+  } else if (g === 'present') {
+    headY += -0.12 * pauseMul + Math.sin(elapsed * 2.2) * 0.07 * pauseMul;
+    headX += pulse * 0.05 * pauseMul;
+  } else if (g === 'explain') {
+    headX += (Math.sin(elapsed * 4.2) * 0.05 + pulse * 0.045) * pauseMul;
+    headY += Math.cos(elapsed * 2.5) * 0.08 * pauseMul;
+  } else if (g === 'curious') {
+    headZ += 0.14;
+    headX += -0.04 + pulse * 0.035;
+  } else if (g === 'nod') {
+    headX += Math.sin(elapsed * 7.5) * 0.12 * pauseMul;
+  } else if (speaking) {
+    headX += (Math.sin(elapsed * 5.0) * 0.045 + pulse * 0.045) * pauseMul;
+    headY += Math.cos(elapsed * 3.0) * 0.07 * pauseMul;
+  }
+
+  rotTo(head, headX, headY, headZ, alpha);
+
+  // Abaissement des bras le long du corps selon armSigns.leftZ / armSigns.rightZ
+  // (Réduire l'amplitude vers 0 lève légèrement le bras ; augmenter l'amplitude l'abaisse vers les hanches)
+  const downMag = 1.25;
+  let lUpX = 0.05, lUpY = 0.05, lUpZ = armSigns.leftZ * downMag;
+  let rUpX = 0.05, rUpY = -0.05, rUpZ = armSigns.rightZ * downMag;
+  let lLoX = -0.18, lLoY = -armSigns.leftZ * 0.15, lLoZ = 0;
+  let rLoX = -0.18, rLoY = -armSigns.rightZ * 0.15, rLoZ = 0;
+  let rHaZ = 0;
+
+  if (g === 'greet') {
+    rUpX = -0.25;
+    rUpY = -0.20;
+    rUpZ = armSigns.rightZ * (downMag - 0.30);
+    rLoX = -0.35;
+    rLoY = -armSigns.rightZ * 0.65;
+    rHaZ = Math.sin(elapsed * 7.0) * 0.22;
+  } else if (g === 'present') {
+    const beat = (0.5 + pulse * 0.5) * pauseMul;
+    rUpX = -0.22 * beat;
+    rUpY = -0.15 * beat;
+    rUpZ = armSigns.rightZ * (downMag - 0.22 * beat);
+    rLoX = -0.28 * beat;
+    rLoY = -armSigns.rightZ * (0.48 * beat + Math.sin(elapsed * 3.2) * 0.12 * beat);
+  } else if (g === 'explain') {
+    const beat = (0.55 + pulse * 0.45) * pauseMul;
+    const osc = Math.sin(elapsed * 3.6) * 0.16 * beat;
+    lUpX = -0.18 * beat;
+    rUpX = -0.18 * beat;
+    lUpZ = armSigns.leftZ * (downMag - 0.18 * beat);
+    rUpZ = armSigns.rightZ * (downMag - 0.18 * beat);
+    lLoX = -0.30 * beat;
+    rLoX = -0.30 * beat;
+    lLoY = -armSigns.leftZ * (0.42 * beat + osc);
+    rLoY = -armSigns.rightZ * (0.42 * beat + osc);
+  } else if (g === 'curious') {
+    rUpX = -0.16;
+    rUpZ = armSigns.rightZ * (downMag - 0.16);
+    rLoX = -0.32;
+    rLoY = -armSigns.rightZ * 0.52;
+  } else if (speaking) {
+    const beat = (0.45 + pulse * 0.55) * pauseMul;
+    rUpX = -0.14 * beat;
+    rUpZ = armSigns.rightZ * (downMag - 0.14 * beat);
+    rLoX = -0.22 * beat;
+    rLoY = -armSigns.rightZ * (0.32 * beat + Math.sin(elapsed * 3.8) * 0.12 * beat);
+    lLoY = -armSigns.leftZ * (0.22 * beat + Math.cos(elapsed * 3.2) * 0.10 * beat);
+  }
+
+  rotTo(lUpper, lUpX, lUpY, lUpZ, alpha);
+  rotTo(rUpper, rUpX, rUpY, rUpZ, alpha);
+  rotTo(lLower, lLoX, lLoY, lLoZ, alpha);
+  rotTo(rLower, rLoX, rLoY, rLoZ, alpha);
+  rotTo(rHand, 0, 0, rHaZ, alpha);
+
+  const expr = currentVrm.expressionManager;
+  if (expr) {
+    blinkTimer -= delta;
+    if (blinkTimer <= 0) {
