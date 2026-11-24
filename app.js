@@ -3,10 +3,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
 
-// URL de ton Cloudflare Worker
 const GEMINI_ENDPOINT = 'https://billowing-field-aa78.simurghe.workers.dev/';
-
-// Modèle Pixiv VRM1 Sample
 const VRM1_SAMPLE_URL = 'https://pixiv.github.io/three-vrm/packages/three-vrm/examples/models/VRM1_Constraint_Twist_Sample.vrm';
 
 const SECTION_META = {
@@ -25,35 +22,29 @@ const PITCH_TEXT =
   "il a suivi un POEI développeur Java Fullstack chez M2i. Il combine développement logiciel, administration systèmes " +
   "et IA embarquée hors ligne, comme son application Android anti-gaspillage avec PaddleOCR, parseq_tiny et SmolVLM2-256M.";
 
-// --- État global ---
 let currentVrm = null;
 let voiceEnabled = true;
 let isSpeaking = false;
-let blinkTimer = 2.9;
+let blinkTimer = 2.8;
 let isBlinking = false;
+let speechFallbackTimer = null;
 const conversationHistory = [];
 
-// État du moteur de chorégraphie de présentatrice
-const speechEngine = {
+// État du speech et de la gestuelle de présentatrice
+const presenterState = {
   active: false,
-  text: '',
-  clauses: [],
+  gesture: 'present', // 'idle' | 'greet' | 'present' | 'explain' | 'curious' | 'nod'
+  emotion: 'happy',
+  emphasis: 0.75,
   clauseIndex: 0,
-  clauseElapsed: 0,
-  totalElapsed: 0,
-  estimatedTotalSec: 4,
-  gesture: 'present',      // 'idle' | 'greet' | 'present' | 'explain' | 'nod' | 'curious' | 'talk'
-  emotion: 'happy',        // 'neutral' | 'happy' | 'curious'
-  emphasis: 0.6,
-  wordAccent: 0,
-  pauseAmount: 0,
+  clauseTimer: 0,
+  clauses: [],
+  pulse: 0,
+  pause: 0,
   syllablePhase: 0,
-  lastCharIndex: -1
+  usedWordBoundary: false
 };
 
-let speechFallbackTimer = null;
-
-// Références DOM
 const canvas = document.getElementById('vrm-canvas');
 const dropZone = document.getElementById('drop-zone');
 const statusDot = document.getElementById('status-dot');
@@ -87,213 +78,147 @@ function setStatus(message, warn = false) {
   statusDot.classList.toggle('warn', warn);
 }
 
-// --- Analyse prosodique & style de présentatrice ---
-function estimateSyllablesFr(str) {
-  const clean = (str || '').toLowerCase().replace(/[^a-zàâäéèêëîïôöùûüç0-9\s]/g, ' ');
-  const words = clean.trim().split(/\s+/).filter(Boolean);
-  let count = 0;
-  for (const w of words) {
-    const groups = w.match(/[aeiouyàâäéèêëîïôöùûü]+/g);
-    count += Math.max(1, groups ? groups.length : 1);
-  }
-  return Math.max(1, count);
-}
+// --- Découpage du speech en phrases avec gestes variés de présentatrice ---
+function parseSpeechClauses(text, llmMeta = {}) {
+  const parts = (text || '')
+    .match(/[^.!?;:…]+[.!?;:…]*/g)
+    ?.map((s) => s.trim())
+    .filter(Boolean) || [(text || '').trim()];
 
-function analyzeSpeechProsody(text, llmMeta = {}) {
-  const raw = (text || '').trim();
-  const segments = raw.match(/[^.!?;:…]+[.!?;:…]*/g) || [raw];
+  const validGestures = ['idle', 'greet', 'present', 'explain', 'curious', 'nod'];
+  const forcedGesture = validGestures.includes(llmMeta.gesture) ? llmMeta.gesture : null;
 
-  const allowedGestures = ['idle', 'greet', 'present', 'explain', 'nod', 'curious', 'talk'];
-  const allowedEmotions = ['neutral', 'happy', 'curious'];
-  const llmGesture = allowedGestures.includes(llmMeta.gesture) ? llmMeta.gesture : null;
-  const llmEmotion =
-    llmMeta.emotion === 'emphatic'
-      ? 'happy'
-      : allowedEmotions.includes(llmMeta.emotion)
-        ? llmMeta.emotion
-        : null;
-
-  let totalSec = 0;
-  const clauses = segments.map((part, idx) => {
-    const seg = part.trim();
+  return parts.map((seg, i) => {
     const low = seg.toLowerCase();
-    const syllables = estimateSyllablesFr(seg);
-    const duration = Math.max(1.15, syllables / 4.2);
-    totalSec += duration;
+    const duration = Math.max(1.4, Math.min(4.2, seg.length * 0.055));
 
-    const endsQuestion = /[?]\s*$/.test(seg);
-    const endsExclam = /[!…]\s*$/.test(seg);
-    const endsPause = /[,;:]\s*$/.test(seg);
+    let gesture = forcedGesture || (i % 2 === 0 ? 'present' : 'explain');
+    let emotion = llmMeta.emotion === 'curious' ? 'curious' : 'happy';
 
-    // Par défaut, une présentatrice garde une attitude accueillante et structurée
-    let gesture = llmGesture || (idx % 2 === 0 ? 'present' : 'explain');
-    let emotion = llmEmotion || 'happy';
-    let emphasis = typeof llmMeta.emphasis === 'number'
-      ? Math.min(1, Math.max(0.3, llmMeta.emphasis))
-      : 0.62;
-
-    if (idx === 0 && /bonjour|salut|bienvenue|assistante/.test(low)) {
+    if (i === 0 && /bonjour|salut|bienvenue|assistante/.test(low)) {
       gesture = 'greet';
-      emotion = 'happy';
-      emphasis = Math.max(emphasis, 0.72);
-    } else if (endsQuestion) {
+    } else if (/[?]\s*$/.test(low)) {
       gesture = 'curious';
       emotion = 'curious';
-      emphasis = Math.min(1, emphasis + 0.1);
-    } else if (/projet|portfolio|ocr|vlm|ia|caterpillar|ingénieur|développeur|application|prototype/.test(low)) {
+    } else if (/projet|portfolio|ocr|vlm|ia|caterpillar|application|prototype/.test(low)) {
       gesture = 'present';
       emotion = 'happy';
-      emphasis = Math.min(1, Math.max(emphasis, 0.78));
-    } else if (/parce que|donc|notamment|architecture|système|formation|compétence|licence|master|m2i|linux|pxe/.test(low)) {
+    } else if (/parce que|donc|notamment|formation|compétence|licence|master|m2i|linux|système/.test(low)) {
       gesture = 'explain';
-      emotion = llmEmotion || 'happy';
-      emphasis = Math.min(1, Math.max(emphasis, 0.68));
-    } else if (idx === segments.length - 1 && !endsExclam) {
+    } else if (i === parts.length - 1) {
       gesture = 'nod';
-      emotion = 'happy';
-    }
-
-    if (endsExclam) {
-      emphasis = Math.min(1, emphasis + 0.14);
-      emotion = 'happy';
     }
 
     return {
       text: seg,
-      low,
       duration,
-      endsQuestion,
-      endsExclam,
-      endsPause,
       gesture,
       emotion,
-      emphasis
+      hasPauseEnd: /[,;:.!?…]\s*$/.test(low)
     };
   });
-
-  return { clauses, totalSec: Math.max(1.6, totalSec) };
 }
 
-function startSpeechChoreography(text, llmMeta = {}) {
-  const { clauses, totalSec } = analyzeSpeechProsody(text, llmMeta);
-  speechEngine.active = true;
-  speechEngine.text = text || '';
-  speechEngine.clauses = clauses;
-  speechEngine.clauseIndex = 0;
-  speechEngine.clauseElapsed = 0;
-  speechEngine.totalElapsed = 0;
-  speechEngine.estimatedTotalSec = totalSec;
-  speechEngine.lastCharIndex = -1;
-  speechEngine.pauseAmount = 0;
-  speechEngine.wordAccent = 0.45;
+function beginSpeechAnimation(text, llmMeta = {}) {
+  if (speechFallbackTimer) {
+    clearTimeout(speechFallbackTimer);
+    speechFallbackTimer = null;
+  }
+
+  const clauses = parseSpeechClauses(text, llmMeta);
+  presenterState.active = true;
+  presenterState.clauses = clauses;
+  presenterState.clauseIndex = 0;
+  presenterState.clauseTimer = 0;
+  presenterState.pulse = 0.85;
+  presenterState.pause = 0;
+  presenterState.syllablePhase = 0;
+  presenterState.usedWordBoundary = false;
+  presenterState.emphasis = typeof llmMeta.emphasis === 'number'
+    ? Math.min(1, Math.max(0.45, llmMeta.emphasis))
+    : 0.75;
 
   const first = clauses[0];
   if (first) {
-    speechEngine.gesture = first.gesture;
-    speechEngine.emotion = first.emotion;
-    speechEngine.emphasis = first.emphasis;
-  } else {
-    speechEngine.gesture = 'present';
-    speechEngine.emotion = 'happy';
-    speechEngine.emphasis = 0.62;
+    presenterState.gesture = first.gesture;
+    presenterState.emotion = first.emotion;
   }
 }
 
-function stopSpeechChoreography() {
-  speechEngine.active = false;
-  speechEngine.pauseAmount = 0;
-  speechEngine.wordAccent = 0;
+function stopSpeechAnimation() {
+  presenterState.active = false;
+  presenterState.pulse = 0;
+  presenterState.pause = 0;
   if (speechFallbackTimer) {
     clearTimeout(speechFallbackTimer);
     speechFallbackTimer = null;
   }
 }
 
-function triggerTransientGesture(gesture, emotion = 'happy', emphasis = 0.65) {
-  const allowedGestures = ['idle', 'greet', 'present', 'explain', 'nod', 'curious', 'talk'];
-  if (allowedGestures.includes(gesture)) {
-    speechEngine.gesture = gesture;
-  }
-  if (emotion) {
-    speechEngine.emotion = emotion;
-  }
-  speechEngine.emphasis = Math.min(1, Math.max(0.25, emphasis));
-  speechEngine.wordAccent = Math.min(1, speechEngine.wordAccent + 0.35);
-}
+function handleWordEvent(text, charIndex) {
+  if (!presenterState.active) return;
+  presenterState.usedWordBoundary = true;
+  presenterState.pulse = Math.min(1, presenterState.pulse + 0.75);
+  presenterState.syllablePhase += 1.4;
 
-function onSpeechWordBoundary(text, charIndex) {
-  if (!speechEngine.active || !text) return;
-  if (typeof charIndex === 'number' && charIndex === speechEngine.lastCharIndex) return;
-  if (typeof charIndex === 'number') speechEngine.lastCharIndex = charIndex;
-
-  speechEngine.wordAccent = Math.min(1, speechEngine.wordAccent + 0.65);
-  speechEngine.syllablePhase += 1.35;
-
-  if (typeof charIndex === 'number') {
-    const tokenMatch = text.slice(charIndex).match(/^[^\s.,!?;:…]+([.,!?;:…]*)/);
-    const word = (tokenMatch?.[0] || '').toLowerCase();
-    const punct = tokenMatch?.[1] || '';
+  if (typeof charIndex === 'number' && text) {
+    const match = text.slice(charIndex).match(/^[^\s.,!?;:…]+([.,!?;:…]*)/);
+    const word = (match?.[0] || '').toLowerCase();
+    const punct = match?.[1] || '';
 
     if (/[?!…]/.test(punct)) {
-      speechEngine.emphasis = Math.min(1, speechEngine.emphasis + 0.14);
+      presenterState.pulse = 1.0;
       if (punct.includes('?')) {
-        speechEngine.gesture = 'curious';
-        speechEngine.emotion = 'curious';
+        presenterState.gesture = 'curious';
+        presenterState.emotion = 'curious';
       } else {
-        speechEngine.gesture = 'present';
-        speechEngine.emotion = 'happy';
+        presenterState.gesture = 'present';
+        presenterState.emotion = 'happy';
       }
     } else if (/[,;:]/.test(punct)) {
-      speechEngine.pauseAmount = 0.8;
+      presenterState.pause = 0.85;
     }
 
-    if (/projet|ocr|vlm|ia|grenoble|java|python|linux|caterpillar|prototype/.test(word)) {
-      speechEngine.gesture = 'present';
-      speechEngine.emotion = 'happy';
-      speechEngine.emphasis = Math.min(1, Math.max(speechEngine.emphasis, 0.78));
-    } else if (/donc|notamment|système|formation|parcours|architecture/.test(word)) {
-      speechEngine.gesture = 'explain';
+    if (/projet|ocr|vlm|ia|grenoble|java|python|linux|caterpillar/.test(word)) {
+      presenterState.gesture = 'present';
+      presenterState.emotion = 'happy';
+    } else if (/donc|notamment|système|formation|parcours/.test(word)) {
+      presenterState.gesture = 'explain';
     }
   }
 }
 
-function stepSpeechChoreography(delta) {
-  if (!speechEngine.active) {
-    speechEngine.wordAccent = Math.max(0, speechEngine.wordAccent - delta * 3.5);
-    speechEngine.pauseAmount = Math.max(0, speechEngine.pauseAmount - delta * 3.0);
-    return;
-  }
+function updateSpeechState(delta) {
+  presenterState.pulse = Math.max(0, presenterState.pulse - delta * 2.6);
+  presenterState.pause = Math.max(0, presenterState.pause - delta * 2.5);
 
-  speechEngine.totalElapsed += delta;
-  speechEngine.clauseElapsed += delta;
-  speechEngine.wordAccent = Math.max(0, speechEngine.wordAccent - delta * 3.2);
-  speechEngine.pauseAmount = Math.max(0, speechEngine.pauseAmount - delta * 2.8);
+  if (!presenterState.active) return;
 
-  const clauses = speechEngine.clauses;
-  const current = clauses[speechEngine.clauseIndex];
-  if (!current) return;
+  presenterState.clauseTimer += delta;
 
-  const remaining = current.duration - speechEngine.clauseElapsed;
-  if (remaining > 0 && remaining < 0.24 && (current.endsPause || /[.!?]$/.test(current.text))) {
-    speechEngine.pauseAmount = Math.max(speechEngine.pauseAmount, 0.65);
-  }
-
-  if (speechEngine.lastCharIndex < 0) {
-    speechEngine.syllablePhase += delta * 11.5 * (1 - speechEngine.pauseAmount * 0.6);
-    if (Math.sin(speechEngine.syllablePhase * 0.5) > 0.94 && speechEngine.wordAccent < 0.2) {
-      speechEngine.wordAccent = 0.45;
+  if (!presenterState.usedWordBoundary) {
+    presenterState.syllablePhase += delta * 11.5 * (1 - presenterState.pause * 0.65);
+    if (Math.sin(presenterState.syllablePhase * 0.5) > 0.92 && presenterState.pulse < 0.25) {
+      presenterState.pulse = 0.55;
     }
   }
 
-  if (speechEngine.clauseElapsed >= current.duration && speechEngine.clauseIndex < clauses.length - 1) {
-    speechEngine.clauseIndex += 1;
-    speechEngine.clauseElapsed = 0;
-    const next = clauses[speechEngine.clauseIndex];
+  const current = presenterState.clauses[presenterState.clauseIndex];
+  if (!current) return;
+
+  if (current.duration - presenterState.clauseTimer < 0.22 && current.hasPauseEnd) {
+    presenterState.pause = Math.max(presenterState.pause, 0.7);
+  }
+
+  if (presenterState.clauseTimer >= current.duration && presenterState.clauseIndex < presenterState.clauses.length - 1) {
+    presenterState.clauseIndex += 1;
+    presenterState.clauseTimer = 0;
+    const next = presenterState.clauses[presenterState.clauseIndex];
     if (next) {
-      speechEngine.gesture = next.gesture;
-      speechEngine.emotion = next.emotion;
-      speechEngine.emphasis = next.emphasis;
-      speechEngine.pauseAmount = 0.45;
+      presenterState.gesture = next.gesture;
+      presenterState.emotion = next.emotion;
+      presenterState.pulse = 0.8;
+      presenterState.pause = 0.4;
     }
   }
 }
@@ -319,13 +244,14 @@ function activateSection(secId) {
   holoBox.classList.add('pulse');
 
   if (!isSpeaking) {
-    triggerTransientGesture(secId === 'sec-portfolio' ? 'present' : 'nod', 'happy', 0.68);
+    presenterState.gesture = secId === 'sec-portfolio' ? 'present' : 'nod';
+    presenterState.emotion = 'happy';
+    presenterState.pulse = 0.85;
     setTimeout(() => {
-      if (!isSpeaking && !speechEngine.active) {
-        speechEngine.gesture = 'idle';
-        speechEngine.emotion = 'happy';
+      if (!isSpeaking && !presenterState.active) {
+        presenterState.gesture = 'idle';
       }
-    }, 1600);
+    }, 1700);
   }
 }
 
@@ -375,17 +301,16 @@ function pickFrenchVoice() {
 function speakText(text, llmMeta = {}) {
   if (!text) return;
 
-  stopSpeechChoreography();
-  startSpeechChoreography(text, llmMeta);
+  beginSpeechAnimation(text, llmMeta);
 
   if (!voiceEnabled || !('speechSynthesis' in window)) {
     isSpeaking = true;
+    const totalMs = Math.max(2000, presenterState.clauses.reduce((acc, c) => acc + c.duration * 1000, 0));
     speechFallbackTimer = setTimeout(() => {
       isSpeaking = false;
-      stopSpeechChoreography();
-      speechEngine.gesture = 'idle';
-      speechEngine.emotion = 'happy';
-    }, Math.max(1600, speechEngine.estimatedTotalSec * 1000));
+      stopSpeechAnimation();
+      presenterState.gesture = 'idle';
+    }, totalMs);
     return;
   }
 
@@ -393,14 +318,14 @@ function speakText(text, llmMeta = {}) {
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.lang = 'fr-FR';
   utterance.rate = 1.02;
-  utterance.pitch = speechEngine.emotion === 'happy' ? 1.06 : 1.02;
+  utterance.pitch = presenterState.emotion === 'happy' ? 1.06 : 1.02;
 
   const frVoice = pickFrenchVoice();
   if (frVoice) utterance.voice = frVoice;
 
   utterance.onboundary = (event) => {
     if (!event.name || event.name === 'word') {
-      onSpeechWordBoundary(text, event.charIndex);
+      handleWordEvent(text, event.charIndex);
     }
   };
 
@@ -410,9 +335,8 @@ function speakText(text, llmMeta = {}) {
 
   utterance.onend = utterance.onerror = () => {
     isSpeaking = false;
-    stopSpeechChoreography();
-    speechEngine.gesture = 'idle';
-    speechEngine.emotion = 'happy';
+    stopSpeechAnimation();
+    presenterState.gesture = 'idle';
   };
 
   window.speechSynthesis.speak(utterance);
@@ -429,8 +353,8 @@ btnVoiceToggle.addEventListener('click', () => {
   if (!voiceEnabled && 'speechSynthesis' in window) {
     window.speechSynthesis.cancel();
     isSpeaking = false;
-    stopSpeechChoreography();
-    speechEngine.gesture = 'idle';
+    stopSpeechAnimation();
+    presenterState.gesture = 'idle';
   }
   setStatus(voiceEnabled ? 'Voix française activée.' : 'Voix coupée.');
 });
@@ -441,7 +365,7 @@ btnPitch.addEventListener('click', () => {
   aiCvCard.classList.remove('hidden');
   aiCvQuestion.textContent = 'Présentation synthétique';
   aiCvAnswer.textContent = PITCH_TEXT;
-  speakText(PITCH_TEXT, { emotion: 'happy', gesture: 'present', emphasis: 0.75 });
+  speakText(PITCH_TEXT, { emotion: 'happy', gesture: 'present', emphasis: 0.8 });
 });
 
 // --- Scène Three.js & @pixiv/three-vrm ---
@@ -519,11 +443,12 @@ function attachVrm(vrm, label) {
   scene.add(vrm.scene);
   setStatus(`Modèle chargé : ${label}`, false);
 
-  // Petit accueil de présentatrice au chargement
-  triggerTransientGesture('greet', 'happy', 0.65);
+  presenterState.gesture = 'greet';
+  presenterState.emotion = 'happy';
+  presenterState.pulse = 0.85;
   setTimeout(() => {
-    if (!isSpeaking && !speechEngine.active) {
-      speechEngine.gesture = 'idle';
+    if (!isSpeaking && !presenterState.active) {
+      presenterState.gesture = 'idle';
     }
   }, 1800);
 }
@@ -596,211 +521,157 @@ dropZone.addEventListener('drop', (e) => {
 
 loadVrmFromUrl(VRM1_SAMPLE_URL, 'VRM1 Sample');
 
-// --- Chorégraphie de présentatrice / assistante ---
+// --- Animation franche et lisible de présentatrice ---
 const clock = new THREE.Clock();
 
-function lerpBoneRot(bone, tx, ty, tz, smooth) {
+function rotTo(bone, x, y, z, alpha) {
   if (!bone) return;
-  bone.rotation.x = THREE.MathUtils.lerp(bone.rotation.x, tx, smooth);
-  bone.rotation.y = THREE.MathUtils.lerp(bone.rotation.y, ty, smooth);
-  bone.rotation.z = THREE.MathUtils.lerp(bone.rotation.z, tz, smooth);
+  bone.rotation.x = THREE.MathUtils.lerp(bone.rotation.x, x, alpha);
+  bone.rotation.y = THREE.MathUtils.lerp(bone.rotation.y, y, alpha);
+  bone.rotation.z = THREE.MathUtils.lerp(bone.rotation.z, z, alpha);
 }
 
-function setExprSafe(expr, name, value) {
-  if (!expr) return;
-  const map = expr.expressionMap;
-  if (map && Object.prototype.hasOwnProperty.call(map, name)) {
-    expr.setValue(name, Math.max(0, Math.min(1, value)));
-  }
-}
-
-function updateMouthArticulation(expr, elapsed, amp, pauseFactor, accent) {
-  if (!expr) return;
-
-  if (!isSpeaking && !speechEngine.active) {
-    setExprSafe(expr, 'aa', 0);
-    setExprSafe(expr, 'oh', 0);
-    setExprSafe(expr, 'ih', 0);
-    return;
-  }
-
-  const s1 = Math.sin(elapsed * 13.5 + speechEngine.syllablePhase * 0.25);
-  const s2 = Math.cos(elapsed * 7.8);
-  const rawEnvelope = Math.max(0, 0.52 + 0.34 * s1 + 0.18 * s2 + accent * 0.25);
-  const energy = rawEnvelope * pauseFactor * (0.48 + 0.36 * amp);
-
-  const vowelCycle = Math.sin(elapsed * 4.3);
-  const aaVal = Math.min(0.85, energy * (vowelCycle >= -0.35 ? 1.0 : 0.45));
-  const ohVal = Math.min(0.55, energy * (vowelCycle > 0.25 ? 0.55 : 0.15));
-  const ihVal = Math.min(0.45, energy * (vowelCycle < -0.2 ? 0.45 : 0.1));
-
-  setExprSafe(expr, 'aa', aaVal);
-  setExprSafe(expr, 'oh', ohVal);
-  setExprSafe(expr, 'ih', ihVal);
+function setExpr(expr, name, val) {
+  if (!expr?.expressionMap || !Object.prototype.hasOwnProperty.call(expr.expressionMap, name)) return;
+  expr.setValue(name, Math.max(0, Math.min(1, val)));
 }
 
 function updateAvatarAnimation(elapsed, delta) {
   if (!currentVrm) return;
 
-  stepSpeechChoreography(delta);
+  updateSpeechState(delta);
 
-  const smooth = 1 - Math.exp(-delta * 8.5);
-  const speakingActive = isSpeaking || speechEngine.active;
-  const mode = speakingActive ? speechEngine.gesture : speechEngine.gesture;
-  const amp = speechEngine.emphasis;
-  const accent = speechEngine.wordAccent;
-  const pauseFactor = Math.max(0.18, 1.0 - speechEngine.pauseAmount * 0.78);
+  const alpha = 1 - Math.exp(-delta * 7.5);
+  const speaking = isSpeaking || presenterState.active;
+  const g = presenterState.gesture;
+  const pulse = presenterState.pulse;
+  const pauseMul = Math.max(0.2, 1 - presenterState.pause * 0.75);
 
-  const humanoid = currentVrm.humanoid;
-  const spine = humanoid?.getNormalizedBoneNode('spine');
-  const chest = humanoid?.getNormalizedBoneNode('chest');
-  const neck = humanoid?.getNormalizedBoneNode('neck');
-  const head = humanoid?.getNormalizedBoneNode('head');
+  const h = currentVrm.humanoid;
+  const chest = h?.getNormalizedBoneNode('chest');
+  const head = h?.getNormalizedBoneNode('head');
+  const lUpper = h?.getNormalizedBoneNode('leftUpperArm');
+  const rUpper = h?.getNormalizedBoneNode('rightUpperArm');
+  const lLower = h?.getNormalizedBoneNode('leftLowerArm');
+  const rLower = h?.getNormalizedBoneNode('rightLowerArm');
+  const rHand = h?.getNormalizedBoneNode('rightHand');
 
-  const lShoulder = humanoid?.getNormalizedBoneNode('leftShoulder');
-  const rShoulder = humanoid?.getNormalizedBoneNode('rightShoulder');
-  const lUpper = humanoid?.getNormalizedBoneNode('leftUpperArm');
-  const rUpper = humanoid?.getNormalizedBoneNode('rightUpperArm');
-  const lLower = humanoid?.getNormalizedBoneNode('leftLowerArm');
-  const rLower = humanoid?.getNormalizedBoneNode('rightLowerArm');
-  const lHand = humanoid?.getNormalizedBoneNode('leftHand');
-  const rHand = humanoid?.getNormalizedBoneNode('rightHand');
-
-  // 1. Posture de présentatrice : buste droit, léger accueil vers la fiche CV à droite
-  const breath = Math.sin(elapsed * 1.9) * 0.015;
-  const presenterYaw = speakingActive ? -0.055 * amp : -0.025;
-  lerpBoneRot(
-    spine,
-    breath * 0.55 + accent * 0.018 * amp * pauseFactor,
-    presenterYaw * 0.6 + Math.sin(elapsed * 0.7) * 0.015,
-    0,
-    smooth
-  );
-  lerpBoneRot(
+  // Buste : léger accueil vers la fiche CV à droite + respiration
+  const breath = Math.sin(elapsed * 2.0) * 0.025;
+  rotTo(
     chest,
-    breath + (mode === 'explain' ? 0.02 * amp : 0) + accent * 0.018 * amp * pauseFactor,
-    presenterYaw + (mode === 'present' ? -0.035 * amp : 0),
+    breath + (speaking ? pulse * 0.04 * pauseMul : 0),
+    (speaking ? -0.11 : -0.04) + Math.sin(elapsed * 1.1) * 0.03,
     0,
-    smooth
+    alpha
   );
 
-  // 2. Tête & regard orientés vers le public et la rubrique présentée
-  let headX = Math.sin(elapsed * 1.35) * 0.018;
-  let headY = presenterYaw * 0.5 + Math.cos(elapsed * 0.9) * 0.025;
-  let headZ = Math.sin(elapsed * 0.65) * 0.012;
+  // Tête : mouvements nets selon la phrase en cours
+  let headX = Math.sin(elapsed * 1.5) * 0.03;
+  let headY = (speaking ? -0.10 : -0.03) + Math.cos(elapsed * 1.2) * 0.04;
+  let headZ = 0;
 
-  if (mode === 'nod') {
-    headX += Math.sin(elapsed * 7.0) * 0.07 * amp;
-  } else if (mode === 'greet') {
-    headX += 0.045 * Math.sin(elapsed * 3.0);
-    headZ += 0.035;
-  } else if (mode === 'present') {
-    headY += -0.06 * amp + Math.sin(elapsed * 2.2) * 0.03 * amp;
-    headX += (Math.sin(elapsed * 3.8) * 0.018 + accent * 0.035) * amp * pauseFactor;
-  } else if (mode === 'explain') {
-    headX += (Math.sin(elapsed * 4.4) * 0.03 + accent * 0.03) * amp * pauseFactor;
-    headY += Math.cos(elapsed * 2.6) * 0.045 * amp;
-    headZ += Math.sin(elapsed * 1.8) * 0.025 * amp;
-  } else if (mode === 'curious') {
-    headZ += 0.07 * amp;
-    headX += (Math.sin(elapsed * 3.6) * 0.022 + accent * 0.02) * amp;
-  } else if (speakingActive) {
-    headX += (Math.sin(elapsed * 5.0) * 0.028 + accent * 0.03) * amp * pauseFactor;
-    headY += Math.cos(elapsed * 3.4) * 0.038 * amp;
+  if (g === 'greet') {
+    headX += Math.sin(elapsed * 4.5) * 0.08;
+    headZ += 0.08;
+  } else if (g === 'present') {
+    // Regarde vers la fiche à droite puis revient vers le public
+    headY += -0.14 * pauseMul + Math.sin(elapsed * 2.2) * 0.09 * pauseMul;
+    headX += pulse * 0.06 * pauseMul;
+  } else if (g === 'explain') {
+    headX += (Math.sin(elapsed * 4.2) * 0.06 + pulse * 0.05) * pauseMul;
+    headY += Math.cos(elapsed * 2.5) * 0.10 * pauseMul;
+  } else if (g === 'curious') {
+    headZ += 0.16;
+    headX += -0.05 + pulse * 0.04;
+  } else if (g === 'nod') {
+    headX += Math.sin(elapsed * 7.5) * 0.14 * pauseMul;
+  } else if (speaking) {
+    headX += (Math.sin(elapsed * 5.0) * 0.05 + pulse * 0.05) * pauseMul;
+    headY += Math.cos(elapsed * 3.0) * 0.08 * pauseMul;
   }
 
-  lerpBoneRot(neck, headX * 0.35, headY * 0.35, headZ * 0.35, smooth);
-  lerpBoneRot(head, headX * 0.65, headY * 0.65, headZ * 0.65, smooth);
+  rotTo(head, headX, headY, headZ, alpha);
 
-  // 3. Bras de présentatrice : posés et ouverts vers l'avant/droite, sans mouvements amples latéraux
-  const microBreathArm = Math.sin(elapsed * 1.9) * 0.012;
+  // Bras : posés le long du corps au repos, puis gestes nets de présentatrice pendant le speech
+  // (En VRM normalisé : +Z sur rightUpperArm / -Z sur leftUpperArm abaisse le bras le long du corps)
+  let lUpX = 0.06, lUpY = 0.05, lUpZ = -1.24;
+  let rUpX = 0.06, rUpY = -0.05, rUpZ = 1.24;
+  let lLoX = -0.20, lLoY = 0.15, lLoZ = 0;
+  let rLoX = -0.20, rLoY = -0.15, rLoZ = 0;
+  let rHaZ = 0;
 
-  let lShZ = -0.03, rShZ = 0.03;
-  let lUpX = 0.06,  lUpY = 0.06,  lUpZ = -1.24 + microBreathArm;
-  let rUpX = 0.06,  rUpY = -0.06, rUpZ = 1.24 - microBreathArm;
-  let lLoX = -0.20, lLoY = 0.14,  lLoZ = 0.0;
-  let rLoX = -0.20, rLoY = -0.14, rLoZ = 0.0;
-  let lHaX = 0.03,  lHaY = 0.0,   lHaZ = -0.04;
-  let rHaX = 0.03,  rHaY = 0.0,   rHaZ = 0.04;
-
-  if (mode === 'greet') {
-    // Accueil élégant : main droite ouverte à hauteur de poitrine/épaule
-    rShZ = -0.04;
-    rUpX = -0.22;
+  if (g === 'greet') {
+    // Main droite levée en salut amical à hauteur d'épaule
+    rUpX = -0.45;
+    rUpY = -0.35;
+    rUpZ = 0.35;
+    rLoX = -0.55;
+    rLoY = -1.35;
+    rHaZ = Math.sin(elapsed * 8.0) * 0.35;
+  } else if (g === 'present') {
+    // Geste net de présentation vers la droite (avant-bras et bras avancés)
+    const sweep = (0.65 + pulse * 0.35) * pauseMul;
+    rUpX = -0.45 * sweep;
+    rUpY = -0.35 * sweep;
+    rUpZ = 1.24 - 0.52 * sweep;
+    rLoX = -0.42 * sweep;
+    rLoY = -0.95 * sweep;
+    rHaZ = -0.15 * sweep;
+  } else if (g === 'explain') {
+    // Deux avant-bras levés et animés devant le buste pour expliquer
+    const beat = (0.6 + pulse * 0.4) * pauseMul;
+    const osc = Math.sin(elapsed * 3.8) * 0.25 * beat;
+    lUpX = -0.30 * beat;
+    rUpX = -0.30 * beat;
+    lUpZ = -1.24 + 0.24 * beat + osc * 0.4;
+    rUpZ = 1.24 - 0.24 * beat - osc * 0.4;
+    lLoX = -0.45 * beat;
+    rLoX = -0.45 * beat;
+    lLoY = 0.75 * beat + osc;
+    rLoY = -0.75 * beat - osc;
+  } else if (g === 'curious') {
+    rUpX = -0.28;
     rUpY = -0.22;
-    rUpZ = 0.54;
-    rLoX = -0.32;
-    rLoY = -1.05;
-    rHaZ = Math.sin(elapsed * 6.5) * 0.18;
-  } else if (mode === 'present') {
-    // Geste de présentatrice : main droite ouverte vers la fiche à droite, main gauche posée
-    const pulse = (Math.sin(elapsed * 2.8) * 0.03 + accent * 0.075) * amp * pauseFactor;
-    rShZ = -0.03;
-    rUpX = -0.24 * amp;
-    rUpY = -0.18 * amp;
-    rUpZ = 0.92 - pulse;
-    rLoX = -0.22;
-    rLoY = -0.62 * amp - pulse;
-    rHaX = -0.10;
-
-    lUpX = 0.04;
-    lUpZ = -1.20;
-    lLoX = -0.24;
-    lLoY = 0.22;
-  } else if (mode === 'explain') {
-    // Explication structurée : deux avant-bras modérés devant le buste
-    const waveL = (Math.sin(elapsed * 3.0) * 0.06 + accent * 0.065) * amp * pauseFactor;
-    const waveR = (Math.sin(elapsed * 3.0 + 0.8) * 0.06 + accent * 0.065) * amp * pauseFactor;
-    lUpX = -0.12 * amp;
-    rUpX = -0.12 * amp;
-    lUpZ = -1.14 + waveL * 0.3;
-    rUpZ = 1.14 - waveR * 0.3;
-    lLoX = -0.24;
-    rLoX = -0.24;
-    lLoY = 0.48 * amp + waveL;
-    rLoY = -0.48 * amp - waveR;
-  } else if (mode === 'curious') {
-    // Écoute / question : main droite légèrement levée avec retenue
-    rUpX = -0.16 * amp;
-    rUpY = -0.12 * amp;
-    rUpZ = 1.04 - accent * 0.05 * amp;
-    rLoX = -0.34;
-    rLoY = -1.02;
-  } else if (speakingActive) {
-    // Parole posée : léger accompagnement de la main droite et de l'avant-bras
-    const beatR = (Math.sin(elapsed * 3.2) * 0.045 + accent * 0.065) * amp * pauseFactor;
-    const beatL = (Math.cos(elapsed * 2.7) * 0.03 + accent * 0.035) * amp * pauseFactor;
-    rUpX = -0.10 * amp;
-    rUpZ = 1.15 - beatR * 0.22;
-    rLoY = -0.36 * amp - beatR;
-    lLoY = 0.18 * amp + beatL;
+    rUpZ = 0.92;
+    rLoX = -0.55;
+    rLoY = -1.25;
+  } else if (speaking) {
+    const beat = (0.55 + pulse * 0.45) * pauseMul;
+    rUpX = -0.22 * beat;
+    rUpZ = 1.24 - 0.22 * beat;
+    rLoX = -0.30 * beat;
+    rLoY = -0.55 * beat - Math.sin(elapsed * 4.2) * 0.18 * beat;
+    lLoY = 0.32 * beat + Math.cos(elapsed * 3.6) * 0.12 * beat;
   }
 
-  lerpBoneRot(lShoulder, 0, 0, lShZ, smooth);
-  lerpBoneRot(rShoulder, 0, 0, rShZ, smooth);
-  lerpBoneRot(lUpper, lUpX, lUpY, lUpZ, smooth);
-  lerpBoneRot(rUpper, rUpX, rUpY, rUpZ, smooth);
-  lerpBoneRot(lLower, lLoX, lLoY, lLoZ, smooth);
-  lerpBoneRot(rLower, rLoX, rLoY, rLoZ, smooth);
-  lerpBoneRot(lHand, lHaX, lHaY, lHaZ, smooth);
-  lerpBoneRot(rHand, rHaX, rHaY, rHaZ, smooth);
+  rotTo(lUpper, lUpX, lUpY, lUpZ, alpha);
+  rotTo(rUpper, rUpX, rUpY, rUpZ, alpha);
+  rotTo(lLower, lLoX, lLoY, lLoZ, alpha);
+  rotTo(rLower, rLoX, rLoY, rLoZ, alpha);
+  rotTo(rHand, 0, 0, rHaZ, alpha);
 
-  // 4. Clignement, sourire d'assistante & articulation labiale
+  // Expressions & bouche pendant le speech
   const expr = currentVrm.expressionManager;
   if (expr) {
     blinkTimer -= delta;
     if (blinkTimer <= 0) {
       isBlinking = !isBlinking;
-      blinkTimer = isBlinking ? 0.12 : 2.8 + Math.random() * 2.4;
+      blinkTimer = isBlinking ? 0.12 : 2.6 + Math.random() * 2.2;
     }
-    setExprSafe(expr, 'blink', isBlinking ? 1.0 : 0.0);
+    setExpr(expr, 'blink', isBlinking ? 1.0 : 0.0);
 
-    updateMouthArticulation(expr, elapsed, amp, pauseFactor, accent);
+    if (speaking) {
+      const env = Math.max(0, 0.52 + 0.35 * Math.sin(elapsed * 14 + presenterState.syllablePhase * 0.2) + presenterState.pulse * 0.25) * pauseMul;
+      setExpr(expr, 'aa', Math.min(0.85, env));
+      setExpr(expr, 'oh', Math.min(0.5, env * 0.45));
+    } else {
+      setExpr(expr, 'aa', 0);
+      setExpr(expr, 'oh', 0);
+    }
 
-    const emo = speakingActive ? speechEngine.emotion : 'happy';
-    setExprSafe(expr, 'happy', emo === 'happy' ? (speakingActive ? 0.42 : 0.28) : 0.0);
-    setExprSafe(expr, 'surprised', emo === 'curious' ? 0.18 : 0.0);
-
+    setExpr(expr, 'happy', presenterState.emotion === 'happy' ? (speaking ? 0.5 : 0.3) : 0);
+    setExpr(expr, 'surprised', presenterState.emotion === 'curious' ? 0.22 : 0);
     expr.update();
   }
 
@@ -811,7 +682,6 @@ function animate() {
   requestAnimationFrame(animate);
   const delta = Math.min(clock.getDelta(), 0.05);
   const elapsed = clock.elapsedTime;
-
   updateAvatarAnimation(elapsed, delta);
   controls.update();
   renderer.render(scene, camera);
@@ -884,7 +754,9 @@ async function askAssistant(question) {
   aiCvQuestion.textContent = `« ${cleanQ} »`;
   aiCvAnswer.textContent = 'Réflexion en cours...';
   assistantBubble.textContent = 'Je consulte le profil d’Alexandre...';
-  triggerTransientGesture('curious', 'curious', 0.6);
+  presenterState.gesture = 'curious';
+  presenterState.emotion = 'curious';
+  presenterState.pulse = 0.6;
   setStatus('Connexion à l’assistante IA...', false);
 
   conversationHistory.push({ role: 'user', content: cleanQ });
@@ -913,13 +785,13 @@ async function askAssistant(question) {
     });
   } catch (err) {
     console.error('Erreur Worker:', err);
-    stopSpeechChoreography();
+    stopSpeechAnimation();
     const fallback =
       "Le service IA est momentanément très sollicité. Vous pouvez consulter directement la rubrique affichée à droite.";
     aiCvAnswer.textContent = fallback;
     assistantBubble.textContent = fallback;
-    speechEngine.emotion = 'happy';
-    speechEngine.gesture = 'idle';
+    presenterState.emotion = 'happy';
+    presenterState.gesture = 'idle';
     setStatus('Service IA temporairement saturé — consultation directe du CV.', true);
   }
 }
