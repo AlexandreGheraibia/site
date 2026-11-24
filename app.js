@@ -25,11 +25,13 @@ const PITCH_TEXT =
   "il a suivi un POEI développeur Java Fullstack chez M2i. Il combine développement logiciel, administration systèmes " +
   "et IA embarquée hors ligne, comme son application Android anti-gaspillage avec PaddleOCR, parseq_tiny et SmolVLM2-256M.";
 
-// État global de la scène, de la voix et du dialogue
+// État global de la scène, de la voix, de la gestuelle et du dialogue
 let currentVrm = null;
 let voiceEnabled = true;
 let isSpeaking = false;
 let currentGesture = 'idle';
+let speechCue = 'talk';
+let speechEmphasis = 0.6;
 let gestureTimer = 0;
 let currentEmotion = 'neutral';
 let blinkTimer = 3.2;
@@ -70,6 +72,49 @@ function setStatus(message, warn = false) {
   statusDot.classList.toggle('warn', warn);
 }
 
+// --- Pilotage gestuel & émotionnel ---
+function applyMotionPlan({ emotion, gesture, emphasis, text }) {
+  const allowedEmotions = ['neutral', 'happy', 'curious', 'emphatic'];
+  const allowedGestures = ['idle', 'nod', 'present', 'talk', 'explain'];
+  const lower = (text || '').toLowerCase();
+
+  if (emotion && allowedEmotions.includes(emotion)) {
+    currentEmotion = emotion === 'emphatic' ? 'happy' : emotion;
+  } else if (/projet|ocr|vlm|ia|succès|passion|grenoble|bonjour/.test(lower)) {
+    currentEmotion = 'happy';
+  } else {
+    currentEmotion = 'neutral';
+  }
+
+  if (gesture && allowedGestures.includes(gesture)) {
+    currentGesture = gesture;
+    speechCue = gesture;
+  } else if (/projet|portfolio|ocr|vlm|caterpillar|ingénieur|développeur/.test(lower)) {
+    currentGesture = 'present';
+    speechCue = 'present';
+  } else if (/[?]/.test(lower)) {
+    currentGesture = 'nod';
+    speechCue = 'curious';
+  } else if (/parce que|donc|notamment|architecture|système|formation|compétence/.test(lower)) {
+    currentGesture = 'explain';
+    speechCue = 'explain';
+  } else {
+    currentGesture = 'talk';
+    speechCue = 'talk';
+  }
+
+  if (typeof emphasis === 'number' && !Number.isNaN(emphasis)) {
+    speechEmphasis = Math.min(1, Math.max(0.2, emphasis));
+  } else {
+    const exclamBoost = /!/.test(lower) ? 0.2 : 0;
+    const questBoost = /[?]/.test(lower) ? 0.1 : 0;
+    speechEmphasis = Math.min(1, 0.45 + Math.min(lower.length / 260, 0.3) + exclamBoost + questBoost);
+  }
+
+  const len = (text || '').length;
+  gestureTimer = Math.min(7, Math.max(1.8, len * 0.032));
+}
+
 // --- Navigation entre rubriques du CV ---
 function activateSection(secId) {
   const targetExists = document.getElementById(secId);
@@ -91,6 +136,7 @@ function activateSection(secId) {
   holoBox.classList.add('pulse');
 
   currentGesture = secId === 'sec-portfolio' ? 'present' : 'nod';
+  speechCue = currentGesture;
   gestureTimer = 1.6;
 }
 
@@ -146,19 +192,31 @@ function speakText(text) {
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.lang = 'fr-FR';
   utterance.rate = 1.03;
-  utterance.pitch = 1.05;
+  utterance.pitch = currentEmotion === 'happy' ? 1.08 : 1.02;
 
   const frVoice = pickFrenchVoice();
   if (frVoice) utterance.voice = frVoice;
 
+  utterance.onboundary = (event) => {
+    if (event.name === 'word') {
+      gestureTimer = Math.max(gestureTimer, 0.35);
+      speechEmphasis = Math.min(1, speechEmphasis + 0.06);
+    }
+  };
+
   utterance.onstart = () => {
     isSpeaking = true;
-    currentGesture = 'talk';
+    if (currentGesture === 'idle') {
+      currentGesture = 'talk';
+    }
   };
 
   utterance.onend = utterance.onerror = () => {
     isSpeaking = false;
-    currentGesture = 'idle';
+    if (gestureTimer <= 0.1) {
+      currentGesture = 'idle';
+      speechCue = 'idle';
+    }
   };
 
   window.speechSynthesis.speak(utterance);
@@ -185,7 +243,12 @@ btnPitch.addEventListener('click', () => {
   aiCvCard.classList.remove('hidden');
   aiCvQuestion.textContent = 'Présentation synthétique';
   aiCvAnswer.textContent = PITCH_TEXT;
-  currentEmotion = 'happy';
+  applyMotionPlan({
+    emotion: 'happy',
+    gesture: 'present',
+    emphasis: 0.78,
+    text: PITCH_TEXT
+  });
   speakText(PITCH_TEXT);
 });
 
@@ -334,7 +397,7 @@ dropZone.addEventListener('drop', (e) => {
 
 loadVrmFromUrl(VRM1_SAMPLE_URL, 'VRM1 Sample');
 
-// --- Animation, clignement et lip-sync ---
+// --- Animation, gestuelle liée au texte, clignement et lip-sync ---
 const clock = new THREE.Clock();
 
 function updateAvatarAnimation(elapsed, delta) {
@@ -344,10 +407,14 @@ function updateAvatarAnimation(elapsed, delta) {
     gestureTimer = Math.max(0, gestureTimer - delta);
     if (gestureTimer === 0 && !isSpeaking) {
       currentGesture = 'idle';
+      speechCue = 'idle';
+      currentEmotion = 'neutral';
     }
   }
 
-  // Respiration légère et gestes sur le torse / tête / bras
+  const smooth = 1 - Math.exp(-delta * 10);
+  const activeMode = isSpeaking || gestureTimer > 0 ? (speechCue || currentGesture) : 'idle';
+
   const chest = currentVrm.humanoid?.getNormalizedBoneNode('chest');
   const head = currentVrm.humanoid?.getNormalizedBoneNode('head');
   const leftArm = currentVrm.humanoid?.getNormalizedBoneNode('leftUpperArm');
@@ -355,33 +422,64 @@ function updateAvatarAnimation(elapsed, delta) {
 
   const breath = Math.sin(elapsed * 2.0) * 0.02;
   if (chest) {
-    chest.rotation.x = breath;
-    chest.rotation.y = Math.sin(elapsed * 0.9) * 0.04;
+    const targetChestX = breath + (activeMode === 'explain' ? 0.03 * speechEmphasis : 0);
+    const targetChestY = Math.sin(elapsed * 0.9) * (0.04 + 0.03 * speechEmphasis);
+    chest.rotation.x = THREE.MathUtils.lerp(chest.rotation.x, targetChestX, smooth);
+    chest.rotation.y = THREE.MathUtils.lerp(chest.rotation.y, targetChestY, smooth);
   }
 
   if (head) {
-    let headPitch = Math.sin(elapsed * 1.5) * 0.03;
-    let headYaw = Math.cos(elapsed * 1.1) * 0.05;
+    let targetPitch = Math.sin(elapsed * 1.5) * 0.025;
+    let targetYaw = Math.cos(elapsed * 1.1) * 0.04;
+    let targetRoll = 0;
 
-    if (currentGesture === 'nod') {
-      headPitch += Math.sin(elapsed * 10) * 0.1;
-    } else if (currentGesture === 'talk') {
-      headPitch += Math.sin(elapsed * 7.5) * 0.05;
-      headYaw += Math.cos(elapsed * 5.2) * 0.06;
+    if (activeMode === 'nod') {
+      targetPitch += Math.sin(elapsed * 8.5) * 0.09 * speechEmphasis;
+    } else if (activeMode === 'present') {
+      targetPitch += Math.sin(elapsed * 4.5) * 0.03 * speechEmphasis;
+      targetYaw += Math.sin(elapsed * 2.6) * 0.08 * speechEmphasis;
+    } else if (activeMode === 'explain') {
+      targetPitch += Math.sin(elapsed * 5.2) * 0.045 * speechEmphasis;
+      targetYaw += Math.cos(elapsed * 3.1) * 0.06 * speechEmphasis;
+      targetRoll = Math.sin(elapsed * 2.2) * 0.04 * speechEmphasis;
+    } else if (activeMode === 'curious') {
+      targetRoll = 0.075 * speechEmphasis;
+      targetPitch += Math.sin(elapsed * 4.0) * 0.03 * speechEmphasis;
+    } else if (activeMode === 'talk' || isSpeaking) {
+      targetPitch += Math.sin(elapsed * 6.8) * 0.045 * speechEmphasis;
+      targetYaw += Math.cos(elapsed * 4.6) * 0.055 * speechEmphasis;
     }
 
-    head.rotation.x = headPitch;
-    head.rotation.y = headYaw;
+    head.rotation.x = THREE.MathUtils.lerp(head.rotation.x, targetPitch, smooth);
+    head.rotation.y = THREE.MathUtils.lerp(head.rotation.y, targetYaw, smooth);
+    head.rotation.z = THREE.MathUtils.lerp(head.rotation.z, targetRoll, smooth);
   }
 
   if (leftArm && rightArm) {
-    leftArm.rotation.z = -1.15 + Math.sin(elapsed * 1.6) * 0.03;
-    rightArm.rotation.z = 1.15 - Math.sin(elapsed * 1.6) * 0.03;
+    let targetLeftZ = -1.15 + Math.sin(elapsed * 1.6) * 0.03;
+    let targetRightZ = 1.15 - Math.sin(elapsed * 1.6) * 0.03;
+    let targetLeftX = 0;
+    let targetRightX = 0;
 
-    if (currentGesture === 'present') {
-      rightArm.rotation.z = 0.65;
-      rightArm.rotation.x = -0.35 + Math.sin(elapsed * 4) * 0.06;
+    if (activeMode === 'present') {
+      targetRightZ = 0.62 - Math.sin(elapsed * 3.2) * 0.06 * speechEmphasis;
+      targetRightX = -0.35 * speechEmphasis;
+      targetLeftZ = -1.02 + Math.sin(elapsed * 2.4) * 0.04 * speechEmphasis;
+    } else if (activeMode === 'explain') {
+      const wave = Math.sin(elapsed * 3.4) * 0.14 * speechEmphasis;
+      targetLeftZ = -0.92 + wave;
+      targetRightZ = 0.92 - wave;
+      targetLeftX = -0.18 * speechEmphasis;
+      targetRightX = -0.18 * speechEmphasis;
+    } else if (isSpeaking) {
+      targetLeftZ = -1.06 + Math.sin(elapsed * 3.8) * 0.08 * speechEmphasis;
+      targetRightZ = 1.06 - Math.cos(elapsed * 3.5) * 0.08 * speechEmphasis;
     }
+
+    leftArm.rotation.z = THREE.MathUtils.lerp(leftArm.rotation.z, targetLeftZ, smooth);
+    rightArm.rotation.z = THREE.MathUtils.lerp(rightArm.rotation.z, targetRightZ, smooth);
+    leftArm.rotation.x = THREE.MathUtils.lerp(leftArm.rotation.x, targetLeftX, smooth);
+    rightArm.rotation.x = THREE.MathUtils.lerp(rightArm.rotation.x, targetRightX, smooth);
   }
 
   // Clignement d'yeux naturel + bouche pendant la parole
@@ -394,7 +492,14 @@ function updateAvatarAnimation(elapsed, delta) {
     }
     expr.setValue('blink', isBlinking ? 1.0 : 0.0);
 
-    const mouthOpen = isSpeaking ? Math.max(0, Math.sin(elapsed * 16) * 0.55 + 0.25) : 0.0;
+    const syllableMod =
+      0.55 +
+      0.3 * Math.sin(elapsed * 14.5) +
+      0.15 * Math.cos(elapsed * 7.2);
+    const mouthOpen = isSpeaking
+      ? Math.max(0, Math.min(0.85, syllableMod * (0.45 + 0.4 * speechEmphasis)))
+      : 0.0;
+
     expr.setValue('aa', mouthOpen);
     expr.setValue('happy', currentEmotion === 'happy' ? 0.45 : 0.0);
     expr.update();
@@ -451,6 +556,7 @@ async function askAssistant(question) {
   aiCvAnswer.textContent = 'Réflexion en cours...';
   assistantBubble.textContent = 'Je consulte le profil d’Alexandre...';
   currentGesture = 'nod';
+  speechCue = 'curious';
   gestureTimer = 1.2;
   setStatus('Connexion à l’assistante IA...', false);
 
@@ -480,7 +586,14 @@ async function askAssistant(question) {
     conversationHistory.push({ role: 'assistant', content: answerText });
     aiCvAnswer.textContent = answerText;
     assistantBubble.textContent = answerText;
-    currentEmotion = 'happy';
+
+    applyMotionPlan({
+      emotion: data.emotion,
+      gesture: data.gesture,
+      emphasis: data.emphasis,
+      text: answerText
+    });
+
     setStatus('Réponse reçue.', false);
     speakText(answerText);
   } catch (err) {
@@ -490,6 +603,8 @@ async function askAssistant(question) {
     aiCvAnswer.textContent = fallback;
     assistantBubble.textContent = fallback;
     currentEmotion = 'neutral';
+    currentGesture = 'idle';
+    speechCue = 'idle';
     setStatus('Service IA indisponible — consultation directe du CV.', true);
   }
 }
