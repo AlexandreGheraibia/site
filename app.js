@@ -30,12 +30,6 @@ let isBlinking = false;
 let speechFallbackTimer = null;
 const conversationHistory = [];
 
-// Signes détectés automatiquement pour abaisser les bras vers les hanches
-const armSigns = {
-  leftZ: 1,
-  rightZ: -1
-};
-
 const presenterState = {
   active: false,
   gesture: 'present',
@@ -83,54 +77,7 @@ function setStatus(message, warn = false) {
   statusDot.classList.toggle('warn', warn);
 }
 
-// --- Détection automatique du sens de rotation Z qui abaisse chaque bras ---
-function calibrateArmDownSigns(vrm) {
-  const h = vrm?.humanoid;
-  if (!h) return;
-
-  const hips = h.getNormalizedBoneNode('hips');
-  const lUpper = h.getNormalizedBoneNode('leftUpperArm');
-  const rUpper = h.getNormalizedBoneNode('rightUpperArm');
-  const lLower = h.getNormalizedBoneNode('leftLowerArm') || lUpper;
-  const rLower = h.getNormalizedBoneNode('rightLowerArm') || rUpper;
-
-  if (!hips || !lUpper || !rUpper) return;
-
-  const hipPos = new THREE.Vector3();
-  const posA = new THREE.Vector3();
-  const posB = new THREE.Vector3();
-
-  // Bras gauche
-  const origLZ = lUpper.rotation.z;
-  hips.getWorldPosition(hipPos);
-  lUpper.rotation.z = origLZ + 0.35;
-  vrm.update(0);
-  lLower.getWorldPosition(posA);
-
-  lUpper.rotation.z = origLZ - 0.35;
-  vrm.update(0);
-  lLower.getWorldPosition(posB);
-
-  lUpper.rotation.z = origLZ;
-  armSigns.leftZ = posA.distanceTo(hipPos) < posB.distanceTo(hipPos) ? 1 : -1;
-
-  // Bras droit
-  const origRZ = rUpper.rotation.z;
-  rUpper.rotation.z = origRZ + 0.35;
-  vrm.update(0);
-  rLower.getWorldPosition(posA);
-
-  rUpper.rotation.z = origRZ - 0.35;
-  vrm.update(0);
-  rLower.getWorldPosition(posB);
-
-  rUpper.rotation.z = origRZ;
-  armSigns.rightZ = posA.distanceTo(hipPos) < posB.distanceTo(hipPos) ? 1 : -1;
-
-  vrm.update(0);
-}
-
-// --- Découpage du speech en phrases avec gestes variés de présentatrice ---
+// --- Découpage du speech en phrases avec gestes de présentatrice ---
 function parseSpeechClauses(text, llmMeta = {}) {
   const parts = (text || '')
     .match(/[^.!?;:…]+[.!?;:…]*/g)
@@ -275,6 +222,7 @@ function updateSpeechState(delta) {
   }
 }
 
+// --- Navigation entre rubriques du CV ---
 function activateSection(secId) {
   const targetExists = document.getElementById(secId);
   if (!targetExists) return;
@@ -338,6 +286,7 @@ contactForm.addEventListener('submit', (e) => {
   assistantBubble.textContent = "Votre client de messagerie va s'ouvrir avec le message préparé pour Alexandre.";
 });
 
+// --- Synthèse vocale FR ---
 function pickFrenchVoice() {
   if (!('speechSynthesis' in window)) return null;
   const voices = window.speechSynthesis.getVoices();
@@ -418,6 +367,7 @@ btnPitch.addEventListener('click', () => {
   speakText(PITCH_TEXT, { emotion: 'happy', gesture: 'present', emphasis: 0.8 });
 });
 
+// --- Scène Three.js & @pixiv/three-vrm ---
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
 renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -490,7 +440,6 @@ function attachVrm(vrm, label) {
 
   currentVrm = vrm;
   scene.add(vrm.scene);
-  calibrateArmDownSigns(vrm);
   setStatus(`Modèle chargé : ${label}`, false);
 
   presenterState.gesture = 'greet';
@@ -571,7 +520,7 @@ dropZone.addEventListener('drop', (e) => {
 
 loadVrmFromUrl(VRM1_SAMPLE_URL, 'VRM1 Sample');
 
-// --- Animation avec sens d'abaissement calibré automatiquement ---
+// --- Animation des bras, tête, buste et expressions ---
 const clock = new THREE.Clock();
 
 function rotTo(bone, x, y, z, alpha) {
@@ -600,11 +549,10 @@ function updateAvatarAnimation(elapsed, delta) {
   const h = currentVrm.humanoid;
   const chest = h?.getNormalizedBoneNode('chest');
   const head = h?.getNormalizedBoneNode('head');
-  const lUpper = h?.getNormalizedBoneNode('leftUpperArm');
-  const rUpper = h?.getNormalizedBoneNode('rightUpperArm');
-  const lLower = h?.getNormalizedBoneNode('leftLowerArm');
-  const rLower = h?.getNormalizedBoneNode('rightLowerArm');
-  const rHand = h?.getNormalizedBoneNode('rightHand');
+  const rUp = h?.getNormalizedBoneNode('rightUpperArm');
+  const lUp = h?.getNormalizedBoneNode('leftUpperArm');
+  const rLo = h?.getNormalizedBoneNode('rightLowerArm');
+  const lLo = h?.getNormalizedBoneNode('leftLowerArm');
 
   const breath = Math.sin(elapsed * 2.0) * 0.022;
   rotTo(
@@ -640,61 +588,182 @@ function updateAvatarAnimation(elapsed, delta) {
 
   rotTo(head, headX, headY, headZ, alpha);
 
-  // Abaissement des bras le long du corps selon armSigns.leftZ / armSigns.rightZ
-  // (Réduire l'amplitude vers 0 lève légèrement le bras ; augmenter l'amplitude l'abaisse vers les hanches)
-  const downMag = 1.25;
-  let lUpX = 0.05, lUpY = 0.05, lUpZ = armSigns.leftZ * downMag;
-  let rUpX = 0.05, rUpY = -0.05, rUpZ = armSigns.rightZ * downMag;
-  let lLoX = -0.18, lLoY = -armSigns.leftZ * 0.15, lLoZ = 0;
-  let rLoX = -0.18, rLoY = -armSigns.rightZ * 0.15, rLoZ = 0;
-  let rHaZ = 0;
+  // Test direct ciblé sur rightUpperArm et leftUpperArm (x = 0, y = 0, z vers -0.8 / +0.8)
+  if (rUp && lUp) {
+    const speechLift = speaking ? (0.08 + pulse * 0.10) * pauseMul : 0;
+    const targetRz = -0.8 + speechLift;
+    const targetLz = 0.8 - speechLift;
 
-  if (g === 'greet') {
-    rUpX = -0.25;
-    rUpY = -0.20;
-    rUpZ = armSigns.rightZ * (downMag - 0.30);
-    rLoX = -0.35;
-    rLoY = -armSigns.rightZ * 0.65;
-    rHaZ = Math.sin(elapsed * 7.0) * 0.22;
-  } else if (g === 'present') {
-    const beat = (0.5 + pulse * 0.5) * pauseMul;
-    rUpX = -0.22 * beat;
-    rUpY = -0.15 * beat;
-    rUpZ = armSigns.rightZ * (downMag - 0.22 * beat);
-    rLoX = -0.28 * beat;
-    rLoY = -armSigns.rightZ * (0.48 * beat + Math.sin(elapsed * 3.2) * 0.12 * beat);
-  } else if (g === 'explain') {
-    const beat = (0.55 + pulse * 0.45) * pauseMul;
-    const osc = Math.sin(elapsed * 3.6) * 0.16 * beat;
-    lUpX = -0.18 * beat;
-    rUpX = -0.18 * beat;
-    lUpZ = armSigns.leftZ * (downMag - 0.18 * beat);
-    rUpZ = armSigns.rightZ * (downMag - 0.18 * beat);
-    lLoX = -0.30 * beat;
-    rLoX = -0.30 * beat;
-    lLoY = -armSigns.leftZ * (0.42 * beat + osc);
-    rLoY = -armSigns.rightZ * (0.42 * beat + osc);
-  } else if (g === 'curious') {
-    rUpX = -0.16;
-    rUpZ = armSigns.rightZ * (downMag - 0.16);
-    rLoX = -0.32;
-    rLoY = -armSigns.rightZ * 0.52;
-  } else if (speaking) {
-    const beat = (0.45 + pulse * 0.55) * pauseMul;
-    rUpX = -0.14 * beat;
-    rUpZ = armSigns.rightZ * (downMag - 0.14 * beat);
-    rLoX = -0.22 * beat;
-    rLoY = -armSigns.rightZ * (0.32 * beat + Math.sin(elapsed * 3.8) * 0.12 * beat);
-    lLoY = -armSigns.leftZ * (0.22 * beat + Math.cos(elapsed * 3.2) * 0.10 * beat);
+    rUp.rotation.x = 0;
+    rUp.rotation.y = 0;
+    rUp.rotation.z = THREE.MathUtils.lerp(rUp.rotation.z, targetRz, 0.15);
+
+    lUp.rotation.x = 0;
+    lUp.rotation.y = 0;
+    lUp.rotation.z = THREE.MathUtils.lerp(lUp.rotation.z, targetLz, 0.15);
   }
 
-  rotTo(lUpper, lUpX, lUpY, lUpZ, alpha);
-  rotTo(rUpper, rUpX, rUpY, rUpZ, alpha);
-  rotTo(lLower, lLoX, lLoY, lLoZ, alpha);
-  rotTo(rLower, rLoX, rLoY, rLoZ, alpha);
-  rotTo(rHand, 0, 0, rHaZ, alpha);
+  if (rLo && lLo) {
+    const loBeat = speaking ? (0.25 + pulse * 0.25) * pauseMul : 0.12;
+    rLo.rotation.x = THREE.MathUtils.lerp(rLo.rotation.x, -loBeat, alpha);
+    lLo.rotation.x = THREE.MathUtils.lerp(lLo.rotation.x, -loBeat, alpha);
+  }
 
   const expr = currentVrm.expressionManager;
   if (expr) {
     blinkTimer -= delta;
     if (blinkTimer <= 0) {
+      isBlinking = !isBlinking;
+      blinkTimer = isBlinking ? 0.12 : 2.6 + Math.random() * 2.2;
+    }
+    setExpr(expr, 'blink', isBlinking ? 1.0 : 0.0);
+
+    if (speaking) {
+      const env = Math.max(0, 0.52 + 0.35 * Math.sin(elapsed * 14 + presenterState.syllablePhase * 0.2) + presenterState.pulse * 0.25) * pauseMul;
+      setExpr(expr, 'aa', Math.min(0.85, env));
+      setExpr(expr, 'oh', Math.min(0.5, env * 0.45));
+    } else {
+      setExpr(expr, 'aa', 0);
+      setExpr(expr, 'oh', 0);
+    }
+
+    setExpr(expr, 'happy', presenterState.emotion === 'happy' ? (speaking ? 0.5 : 0.3) : 0);
+    setExpr(expr, 'surprised', presenterState.emotion === 'curious' ? 0.22 : 0);
+    expr.update();
+  }
+
+  currentVrm.update(delta);
+}
+
+function animate() {
+  requestAnimationFrame(animate);
+  const delta = Math.min(clock.getDelta(), 0.05);
+  const elapsed = clock.elapsedTime;
+  updateAvatarAnimation(elapsed, delta);
+  controls.update();
+  renderer.render(scene, camera);
+}
+
+animate();
+
+// --- Dialogue & appel au Cloudflare Worker (avec retry 503) ---
+function inferSectionFromQuestion(question) {
+  const q = question.toLowerCase();
+  if (q.includes('compétence') || q.includes('competence') || q.includes('stack') || q.includes('java') || q.includes('python')) {
+    return 'sec-competences';
+  }
+  if (q.includes('projet') || q.includes('portfolio') || q.includes('ocr') || q.includes('vlm') || q.includes('caterpillar')) {
+    return 'sec-portfolio';
+  }
+  if (q.includes('expérience') || q.includes('experience') || q.includes('emploi') || q.includes('travail') || q.includes('solidura')) {
+    return 'sec-experience';
+  }
+  if (q.includes('formation') || q.includes('diplôme') || q.includes('diplome') || q.includes('master') || q.includes('m2i') || q.includes('fourier')) {
+    return 'sec-formation';
+  }
+  if (q.includes('intérêt') || q.includes('interet') || q.includes('vélo') || q.includes('velo') || q.includes('ollama') || q.includes('sf')) {
+    return 'sec-interets';
+  }
+  if (q.includes('contact') || q.includes('mail') || q.includes('joindre') || q.includes('grenoble')) {
+    return 'sec-contact';
+  }
+  return 'sec-parcours';
+}
+
+async function fetchGeminiWithRetry(payload, retries = 2) {
+  let lastError = null;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const res = await fetch(GEMINI_ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      if (res.status === 503 && attempt < retries) {
+        await new Promise((r) => setTimeout(r, 450 * (attempt + 1)));
+        continue;
+      }
+
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+
+      return await res.json();
+    } catch (err) {
+      lastError = err;
+      if (attempt < retries) {
+        await new Promise((r) => setTimeout(r, 450 * (attempt + 1)));
+      }
+    }
+  }
+  throw lastError;
+}
+
+async function askAssistant(question) {
+  const cleanQ = question.trim();
+  if (!cleanQ) return;
+
+  const targetSec = inferSectionFromQuestion(cleanQ);
+  activateSection(targetSec);
+
+  aiCvCard.classList.remove('hidden');
+  aiCvQuestion.textContent = `« ${cleanQ} »`;
+  aiCvAnswer.textContent = 'Réflexion en cours...';
+  assistantBubble.textContent = 'Je consulte le profil d’Alexandre...';
+  presenterState.gesture = 'curious';
+  presenterState.emotion = 'curious';
+  presenterState.pulse = 0.6;
+  setStatus('Connexion à l’assistante IA...', false);
+
+  conversationHistory.push({ role: 'user', content: cleanQ });
+
+  try {
+    const data = await fetchGeminiWithRetry({
+      question: cleanQ,
+      history: conversationHistory.slice(-6)
+    });
+
+    const answerText =
+      data.answer ||
+      data.reply ||
+      data.text ||
+      "Je n'ai pas pu formuler de réponse détaillée pour le moment.";
+
+    conversationHistory.push({ role: 'assistant', content: answerText });
+    aiCvAnswer.textContent = answerText;
+    assistantBubble.textContent = answerText;
+
+    setStatus('Réponse reçue.', false);
+    speakText(answerText, {
+      emotion: data.emotion,
+      gesture: data.gesture,
+      emphasis: data.emphasis
+    });
+  } catch (err) {
+    console.error('Erreur Worker:', err);
+    stopSpeechAnimation();
+    const fallback =
+      "Le service IA est momentanément très sollicité. Vous pouvez consulter directement la rubrique affichée à droite.";
+    aiCvAnswer.textContent = fallback;
+    assistantBubble.textContent = fallback;
+    presenterState.emotion = 'happy';
+    presenterState.gesture = 'idle';
+    setStatus('Service IA temporairement saturé — consultation directe du CV.', true);
+  }
+}
+
+chatForm.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const value = chatInput.value.trim();
+  if (!value) return;
+  chatInput.value = '';
+  askAssistant(value);
+});
+
+quickPromptButtons.forEach((btn) => {
+  btn.addEventListener('click', () => {
+    const q = btn.dataset.q;
+    if (q) askAssistant(q);
+  });
+});
