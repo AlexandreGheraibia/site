@@ -375,11 +375,11 @@ function updateAvatarAnimation(elapsed, delta) {
   }
 
   if (leftArm && rightArm) {
-    leftArm.rotation.z = 1.15 + Math.sin(elapsed * 1.6) * 0.03;
-    rightArm.rotation.z = -1.15 - Math.sin(elapsed * 1.6) * 0.03;
+    leftArm.rotation.z = -1.15 + Math.sin(elapsed * 1.6) * 0.03;
+    rightArm.rotation.z = 1.15 - Math.sin(elapsed * 1.6) * 0.03;
 
     if (currentGesture === 'present') {
-      rightArm.rotation.z = -0.65;
+      rightArm.rotation.z = 0.65;
       rightArm.rotation.x = -0.35 + Math.sin(elapsed * 4) * 0.06;
     }
   }
